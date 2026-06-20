@@ -1,0 +1,14 @@
+# 动环监控预警平台 — 后端测试/开发依赖
+# 与 requirements.txt 分离：仅本地与 CI 测试需要，不进生产镜像。
+# 红线 #9.3：测试默认在无外网、无密钥环境可确定性通过——下列均为内存态/拦截器，离线可用。
+-r requirements.txt
+
+pytest>=8.0
+pytest-asyncio>=0.23      # async def 测试（asyncio_mode=auto）
+fakeredis>=2.21           # 内存态 Redis，替代真实 Redis
+respx>=0.21               # 拦截 httpx，离线模拟 EMS/通知网关
+aiosqlite>=0.20           # 内存态 SQLAlchemy 异步引擎（ORM 行为测试）
+
+# 质量门禁工具（与 CLAUDE.md §4.1 对齐）
+ruff>=0.5
+pyright>=1.1

@@ -1,0 +1,30 @@
+# 动环监控预警平台 — 后端依赖
+# Web 框架与服务器
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+python-multipart>=0.0.9
+
+# 数据库（应用走 asyncpg；Alembic 走 psycopg2 同步驱动）
+SQLAlchemy[asyncio]>=2.0,<3.0
+asyncpg>=0.29
+psycopg2-binary>=2.9
+alembic>=1.13
+
+# 配置与校验
+pydantic>=2.6,<3.0
+pydantic-settings>=2.2
+
+# Redis / HTTP 客户端
+redis>=5.0
+httpx>=0.26
+
+# 调度（定时同步 / 回补巡检 / 定时报表）
+APScheduler>=3.10
+
+# 报表 Excel 导出（Sprint 6）
+openpyxl>=3.1
+
+# 安全：密码哈希 / JWT / 对称加密
+bcrypt>=4.1
+PyJWT>=2.8
+cryptography>=42.0

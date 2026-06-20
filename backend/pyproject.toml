@@ -1,0 +1,32 @@
+# 工具链配置（ruff / pyright）。依赖以 requirements.txt 为安装事实源。
+[project]
+name = "dcim-platform-backend"
+version = "0.1.0"
+description = "动环监控预警平台 后端"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]  # FastAPI Depends 默认参数模式
+
+[tool.pyright]
+include = ["app", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# 异步行为级测试：自动识别 async def test_*，无需逐个 @pytest.mark.asyncio
+asyncio_mode = "auto"
+filterwarnings = [
+    # bcrypt 短密钥告警仅在测试用例触发，与生产无关
+    "ignore::DeprecationWarning",
+]
