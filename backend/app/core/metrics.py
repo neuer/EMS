@@ -18,6 +18,7 @@ logger = get_logger("metrics")
 # 失败指标名（稳定标识，供看板/告警按名聚合）
 M_INGEST_PERSIST = "ingest_persist_failed"  # 实时落库失败（红线：数据不丢）
 M_INGEST_REDIS = "ingest_redis_failed"  # 最新值/状态 Redis 写失败
+M_INGEST_PARSE_DROP = "ingest_parse_drop"  # 脏数据（value/save_time 解析失败）丢弃计数
 M_INGEST_PUSH_HANDLE = "ingest_push_handle_failed"  # 推送处理整体失败
 M_RULE_EVAL = "rule_eval_failed"  # 规则评估失败（漏判风险）
 M_ALARM_PUBLISH = "alarm_publish_failed"  # 告警事件发布失败（通知丢失风险）

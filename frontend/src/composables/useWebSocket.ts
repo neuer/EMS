@@ -29,6 +29,8 @@ export function useRealtimeSocket() {
   let backoff = 1000
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let closedByUser = false
+  let attempts = 0
+  const MAX_ATTEMPTS = 10 // 审查 F：重连次数上限，避免无限重连
 
   function buildUrl(): string {
     const auth = useAuthStore()
@@ -44,12 +46,17 @@ export function useRealtimeSocket() {
   }
 
   function connect(): void {
+    // 审查 F：已有连接（连接中/已连）时不重复建立，避免误用造成双连接
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+      return
+    }
     closedByUser = false
     ws = new WebSocket(buildUrl())
 
     ws.onopen = () => {
       connected.value = true
       backoff = 1000
+      attempts = 0 // 连接成功重置重连计数
       sendSubscribe()
     }
 
@@ -68,9 +75,15 @@ export function useRealtimeSocket() {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev: CloseEvent) => {
       connected.value = false
-      if (!closedByUser) {
+      // 审查 F：鉴权失败（服务端 1008）→ 停止重连并登出，避免无效循环重连
+      if (ev.code === 1008) {
+        closedByUser = true
+        useAuthStore().clear()
+        return
+      }
+      if (!closedByUser && attempts < MAX_ATTEMPTS) {
         scheduleReconnect()
       }
     }
@@ -84,6 +97,7 @@ export function useRealtimeSocket() {
     if (reconnectTimer) {
       return
     }
+    attempts += 1
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       connect()

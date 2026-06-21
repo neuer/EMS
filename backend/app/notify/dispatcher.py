@@ -240,7 +240,14 @@ async def flush_digests() -> int:
     flushed = 0
     async with AsyncSessionLocal() as db:
         for merge_key, count_s in counts.items():
-            meta = json.loads(metas.get(merge_key) or "{}")
+            try:
+                # 审查 F：单个 merge_key 的 meta 为脏值（手工改/版本切换）时跳过该 key，
+                # 不让一个坏值的 json.loads 抛错拖垮整轮其余摘要。
+                meta = json.loads(metas.get(merge_key) or "{}")
+            except (ValueError, TypeError):
+                logger.warning("摘要 meta 解析失败，跳过该 key",
+                               extra={"extra_fields": {"merge_key": merge_key}})
+                continue
             level = int(meta.get("level") or 5)
             resource_id = str(meta.get("resource_id") or merge_key)
             targets = await _load_targets(db, level)
