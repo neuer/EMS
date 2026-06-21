@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from app.core.constants import CONN_STATE_OFFLINE, REDIS_EMS_CONN
 from app.ems import connection
 from app.ems.protocol import EmsError
 
@@ -105,9 +106,9 @@ async def test_run_reconnects_and_resubscribes_after_heart_failure(fake_redis) -
     )
     await asyncio.wait_for(mgr._run(), timeout=2)
     stub = mgr.client
-    assert stub.login_count >= 2  # type: ignore[attr-defined]  发生了重连
-    assert stub.data_sub_count >= 2  # type: ignore[attr-defined]  每次重连都重订阅 data
-    assert stub.alarm_sub_count >= 2  # type: ignore[attr-defined]  每次重连都重订阅 alarm
+    assert stub.login_count == 2  # type: ignore[attr-defined]  恰好重连一次（stop 后不多跑）
+    assert stub.data_sub_count == 2  # type: ignore[attr-defined]  每次重连都重订阅 data
+    assert stub.alarm_sub_count == 2  # type: ignore[attr-defined]  每次重连都重订阅 alarm
 
 
 async def test_run_stops_on_fatal_credential_error(fake_redis) -> None:
@@ -116,3 +117,8 @@ async def test_run_stops_on_fatal_credential_error(fake_redis) -> None:
     mgr.client = _StubClient(login_error=EmsError(100, "bad cred"))  # type: ignore[assignment]
     await asyncio.wait_for(mgr._run(), timeout=2)
     assert mgr.client.login_count == 1  # type: ignore[attr-defined]  未重连
+    # 区分「致命 break 退出」与「正常 stop 退出」：致命路径不应触发 _stop
+    assert mgr._stop.is_set() is False
+    # 致命退出前写入离线状态 token_ok=0（红线 #10.1 可观测）
+    assert await fake_redis.hget(REDIS_EMS_CONN, "state") == CONN_STATE_OFFLINE
+    assert await fake_redis.hget(REDIS_EMS_CONN, "token_ok") == "0"

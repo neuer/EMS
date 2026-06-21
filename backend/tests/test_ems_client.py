@@ -49,6 +49,27 @@ async def test_tokened_request_carries_token_header() -> None:
 
 
 @respx.mock
+async def test_subscribe_sends_header_packet_and_token() -> None:
+    """订阅请求同样需包头 {version,data} + token 头（红线 #3/#4 重订阅报文格式）。"""
+    data_route = respx.post(f"{_BASE}/north/online_data_subscribe").mock(
+        return_value=httpx.Response(200, json={"error_code": 0, "error_msg": "ok", "data": {}})
+    )
+    alarm_route = respx.post(f"{_BASE}/north/online_alarm_subscribe").mock(
+        return_value=httpx.Response(200, json={"error_code": 0, "error_msg": "ok", "data": {}})
+    )
+    c = _client()
+    c.token = "TOK"
+    await c.online_data_subscribe(True)
+    await c.online_alarm_subscribe(True)
+    for route in (data_route, alarm_route):
+        req = route.calls.last.request
+        body = json.loads(req.content)
+        assert body["version"] == "20170714124155"  # 包头 version
+        assert body["data"]["subscribe"] is True  # 包头 data
+        assert req.headers["token"] == "TOK"  # 带 token
+
+
+@respx.mock
 async def test_business_error_raises_ems_error() -> None:
     respx.post(f"{_BASE}/north/heart").mock(
         return_value=httpx.Response(200, json={"error_code": 2, "error_msg": "abnormal token",
