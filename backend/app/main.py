@@ -85,7 +85,7 @@ app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,  # 审查 C1：收敛为内网来源，不再通配
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

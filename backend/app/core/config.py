@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
+    # 审查 C1：CORS 允许来源。此前通配 "*" 配合 Bearer token 使任意站点脚本可跨域携带
+    # token 调用。收敛为内网前端实际地址；可由环境变量 CORS_ORIGINS 以逗号/JSON 覆盖。
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8080"]
 
     # ---- PostgreSQL / TimescaleDB ----
     postgres_host: str = "localhost"

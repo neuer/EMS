@@ -7,12 +7,19 @@
 """
 from __future__ import annotations
 
+import asyncio
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
+from app.core.constants import REDIS_USER_ADMIN_LOCK
 from app.core.db import get_db
+from app.core.redis import redis_client, release_lock_if_owner
 from app.core.security import Role, hash_password
 from app.models.user import User
 from app.schemas.common import ok
@@ -24,6 +31,27 @@ from app.schemas.user import (
 )
 
 router = APIRouter(prefix="/users", tags=["用户管理"])
+
+_ADMIN_LOCK_TTL = 10  # 秒，兜底防异常未释放
+
+
+@asynccontextmanager
+async def _admin_guard_lock() -> AsyncIterator[None]:
+    """串行化「保留至少一个管理员」守卫的读-检查-提交，防 TOCTOU 并发自锁（审查 C3）。
+
+    用唯一 token 持锁、比对释放；获取失败短暂重试，超时返回 409 让客户端重试。
+    """
+    token = uuid.uuid4().hex
+    for _ in range(40):  # 最多约 2s
+        if await redis_client.set(REDIS_USER_ADMIN_LOCK, token, nx=True, ex=_ADMIN_LOCK_TTL):
+            break
+        await asyncio.sleep(0.05)
+    else:
+        raise HTTPException(status.HTTP_409_CONFLICT, "用户管理操作并发冲突，请重试")
+    try:
+        yield
+    finally:
+        await release_lock_if_owner(REDIS_USER_ADMIN_LOCK, token)
 
 
 # ---------------- 纯函数不变量守卫（可离线单测） ----------------
@@ -113,19 +141,20 @@ async def update_user(
     ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "不可禁用或降级当前登录账户")
 
-    # 守卫：变更后必须保留至少一个启用的管理员
-    if user.role == Role.ADMIN and not will_keep_an_admin(
-        await _enabled_admin_usernames(db),
-        user.username,
-        new_role=body.role,
-        new_enabled=body.enabled,
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "必须至少保留一个启用的管理员")
+    # 审查 C3：守卫与提交在分布式锁内串行，防并发降级/禁用绕过「至少一个管理员」不变量
+    async with _admin_guard_lock():
+        if user.role == Role.ADMIN and not will_keep_an_admin(
+            await _enabled_admin_usernames(db),
+            user.username,
+            new_role=body.role,
+            new_enabled=body.enabled,
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "必须至少保留一个启用的管理员")
 
-    data = body.model_dump(exclude_unset=True)
-    for key, value in data.items():
-        setattr(user, key, value)
-    await db.commit()
+        data = body.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(user, key, value)
+        await db.commit()
     await db.refresh(user)
     return ok(_dump(user))
 
@@ -156,10 +185,12 @@ async def delete_user(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在")
     if user.id == current.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "不可删除当前登录账户")
-    if user.role == Role.ADMIN and not will_keep_an_admin(
-        await _enabled_admin_usernames(db), user.username, delete=True
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "必须至少保留一个启用的管理员")
-    await db.delete(user)
-    await db.commit()
+    # 审查 C3：守卫与删除在分布式锁内串行，防并发删除绕过「至少一个管理员」不变量
+    async with _admin_guard_lock():
+        if user.role == Role.ADMIN and not will_keep_an_admin(
+            await _enabled_admin_usernames(db), user.username, delete=True
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "必须至少保留一个启用的管理员")
+        await db.delete(user)
+        await db.commit()
     return ok({"deleted": user_id})

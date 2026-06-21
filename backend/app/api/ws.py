@@ -14,19 +14,26 @@ from typing import Any
 
 import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from sqlalchemy import select
 
 from app.core.constants import CHANNEL_REALTIME
+from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.core.redis import redis_client
 from app.core.security import decode_access_token
+from app.models.user import User
 
 logger = get_logger("ws")
 
 router = APIRouter()
 
 
-def _authenticate(token: str | None) -> str | None:
-    """校验 JWT，返回用户名；失败返回 None。"""
+async def _authenticate(token: str | None) -> str | None:
+    """校验 JWT 并查库校验用户存在且启用，返回用户名；失败返回 None。
+
+    审查 C2：此前仅解 JWT 不查库，管理员禁用账户后旧 token 仍可建 WS 取数，
+    与 HTTP 路径（deps.get_current_user）不一致。此处对齐：校验 user.enabled。
+    """
     if not token:
         return None
     try:
@@ -34,7 +41,15 @@ def _authenticate(token: str | None) -> str | None:
     except jwt.PyJWTError:
         return None
     sub = payload.get("sub")
-    return sub if isinstance(sub, str) else None
+    if not isinstance(sub, str):
+        return None
+    async with AsyncSessionLocal() as db:
+        user = (
+            await db.execute(select(User).where(User.username == sub))
+        ).scalar_one_or_none()
+    if user is None or not user.enabled:
+        return None
+    return sub
 
 
 async def _client_reader(ws: WebSocket, state: dict[str, set[str]]) -> None:
@@ -85,7 +100,7 @@ async def _pubsub_forwarder(ws: WebSocket, state: dict[str, set[str]]) -> None:
 
 @router.websocket("/ws/realtime")
 async def ws_realtime(websocket: WebSocket, token: str | None = None) -> None:
-    username = _authenticate(token)
+    username = await _authenticate(token)
     if username is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
