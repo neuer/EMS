@@ -64,6 +64,10 @@ const mttrMin = computed(() =>
   stats.value?.mttr_seconds != null ? (stats.value.mttr_seconds / 60).toFixed(1) : '—',
 )
 
+function onChartResize(): void {
+  chart?.resize()
+}
+
 function renderChart(): void {
   if (!chart || !stats.value) return
   const buckets = stats.value.buckets
@@ -216,11 +220,13 @@ onMounted(async () => {
   if (chartEl.value) {
     chart = echarts.init(chartEl.value)
     renderChart()
-    window.addEventListener('resize', () => chart?.resize())
+    // 审查 D2：具名回调，便于 onBeforeUnmount 对称移除，避免匿名监听泄漏
+    window.addEventListener('resize', onChartResize)
   }
   await loadSchedules()
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onChartResize)
   chart?.dispose()
   chart = null
 })

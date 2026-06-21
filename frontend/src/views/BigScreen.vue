@@ -9,6 +9,7 @@ import { queryHistory } from '@/api/history'
 import type { Alarm, AlarmStats, PointItem, SpaceNode } from '@/api/types'
 import { LEVEL_LABEL } from '@/api/types'
 import { useRealtimeSocket } from '@/composables/useWebSocket'
+import { formatLocalTime } from '@/lib/datetime'
 
 // 设计基准分辨率（值班墙 1920×1080），运行时按视口等比缩放自适应
 const BASE_W = 1920
@@ -73,6 +74,10 @@ const areaPages = computed(() => {
 })
 
 const currentAreaPage = computed(() => areaPages.value[areaPage.value % areaPages.value.length])
+
+function onChartResize(): void {
+  chart?.resize()
+}
 
 function fitScale(): void {
   scale.value = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H)
@@ -159,7 +164,8 @@ onMounted(async () => {
 
   if (chartEl.value) {
     chart = echarts.init(chartEl.value)
-    window.addEventListener('resize', () => chart?.resize())
+    // 审查 D2：具名回调，便于 onUnmounted 对称移除，避免匿名监听泄漏
+    window.addEventListener('resize', onChartResize)
   }
   await loadCurves()
 
@@ -176,6 +182,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', fitScale)
+  window.removeEventListener('resize', onChartResize)
   if (clockTimer) clearInterval(clockTimer)
   if (dataTimer) clearInterval(dataTimer)
   if (alarmTimer) clearInterval(alarmTimer)
@@ -235,7 +242,7 @@ onUnmounted(() => {
                 </span>
                 <span class="a-res">{{ a.resource_id }}</span>
                 <span class="a-content">{{ a.content }}</span>
-                <span class="a-time">{{ a.triggered_at?.slice(11, 19) }}</span>
+                <span class="a-time">{{ formatLocalTime(a.triggered_at) }}</span>
               </div>
             </transition-group>
             <div v-if="scrollAlarms.length === 0" class="empty">暂无活动告警</div>
