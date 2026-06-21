@@ -6,6 +6,7 @@ import { fetchActiveAlarms, fetchAlarmStats } from '@/api/alarms'
 import { fetchPoints, fetchSpaceTree } from '@/api/assets'
 import type { Alarm, AlarmStats, PointItem, SpaceNode } from '@/api/types'
 import { LEVEL_LABEL, LEVEL_TAG } from '@/api/types'
+import { formatLocal } from '@/lib/datetime'
 import { useRealtimeSocket } from '@/composables/useWebSocket'
 
 const router = useRouter()
@@ -147,7 +148,9 @@ onUnmounted(() => {
         <el-table-column prop="content" label="内容" />
         <el-table-column prop="source" label="来源" width="90" />
         <el-table-column prop="status" label="状态" width="100" />
-        <el-table-column prop="triggered_at" label="触发时间" width="200" />
+        <el-table-column label="触发时间" width="200">
+          <template #default="{ row }">{{ formatLocal(row.triggered_at) }}</template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>

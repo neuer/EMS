@@ -13,6 +13,7 @@ import {
 import type { Alarm, AlarmDetail } from '@/api/types'
 import { LEVEL_LABEL, LEVEL_TAG } from '@/api/types'
 import { useAuthStore } from '@/store/auth'
+import { formatLocal } from '@/lib/datetime'
 
 const auth = useAuthStore()
 const isMobile = ref(false)
@@ -156,7 +157,9 @@ onMounted(loadActive)
         </template>
       </el-table-column>
       <el-table-column prop="merge_count" label="合并" width="70" />
-      <el-table-column prop="triggered_at" label="触发时间" width="200" />
+      <el-table-column label="触发时间" width="200">
+        <template #default="{ row }">{{ formatLocal(row.triggered_at) }}</template>
+      </el-table-column>
     </el-table>
 
     <el-drawer v-model="drawer" title="告警详情" :size="drawerSize">
@@ -190,7 +193,7 @@ onMounted(loadActive)
           <el-timeline-item
             v-for="ev in detail.events"
             :key="ev.id"
-            :timestamp="ev.occurred_at"
+            :timestamp="formatLocal(ev.occurred_at)"
           >
             <b>{{ EVENT_LABEL[ev.event] || ev.event }}</b>
             <span v-if="ev.note"> — {{ ev.note }}</span>

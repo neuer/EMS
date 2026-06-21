@@ -57,7 +57,13 @@ class EmsClient:
 
         code = payload.get("error_code")
         if code != 0:
-            raise EmsError(int(code) if code is not None else -1, payload.get("error_msg", ""))
+            # 审查 B7：error_code 为畸形非整数时，int() 抛 ValueError 会逃逸 EmsError/
+            # EmsTransportError 分类。归一为传输错误，使上层重连逻辑能正确兜住。
+            try:
+                code_int = int(code) if code is not None else -1
+            except (TypeError, ValueError):
+                raise EmsTransportError(f"非法 error_code: {code!r}") from None
+            raise EmsError(code_int, payload.get("error_msg", ""))
         # 响应空值键必须保留，data 缺失时回退空 dict
         result = payload.get("data")
         return result if isinstance(result, dict) else {"_raw": result}

@@ -118,8 +118,20 @@ async def _send_one(
     """单渠道单接收人发送，含重试，写 notify_logs。"""
     adapter = get_adapter(channel.type)
     if adapter is None:
+        # 审查 B5：未注册渠道类型此前静默 return，告警一条不发且无 log/指标/notify_log，
+        # 运维面板误判正常。改为写 failed 日志 + 指标，使配置错误可观测。
+        db.add(NotifyLog(
+            alarm_id=message.alarm_id, channel_id=channel.id, recipient=recipient.name,
+            trigger=message.trigger, status="failed",
+            error=f"未知渠道类型: {channel.type}", retry_count=0,
+        ))
+        await record_failure(M_NOTIFY_SEND, error=f"unknown_channel_type:{channel.type}")
+        logger.error(
+            "通知渠道类型未注册，告警未发送",
+            extra={"extra_fields": {"channel_id": channel.id, "type": channel.type}},
+        )
         return
-    cfg = decrypt_config(channel.config)
+    cfg = await decrypt_config(channel.config)
     recipient_dict = {
         "name": recipient.name, "phone": recipient.phone, "email": recipient.email,
         "dingtalk_id": recipient.dingtalk_id, "wecom_id": recipient.wecom_id,
@@ -228,7 +240,14 @@ async def flush_digests() -> int:
     flushed = 0
     async with AsyncSessionLocal() as db:
         for merge_key, count_s in counts.items():
-            meta = json.loads(metas.get(merge_key) or "{}")
+            try:
+                # 审查 F：单个 merge_key 的 meta 为脏值（手工改/版本切换）时跳过该 key，
+                # 不让一个坏值的 json.loads 抛错拖垮整轮其余摘要。
+                meta = json.loads(metas.get(merge_key) or "{}")
+            except (ValueError, TypeError):
+                logger.warning("摘要 meta 解析失败，跳过该 key",
+                               extra={"extra_fields": {"merge_key": merge_key}})
+                continue
             level = int(meta.get("level") or 5)
             resource_id = str(meta.get("resource_id") or merge_key)
             targets = await _load_targets(db, level)

@@ -11,6 +11,7 @@ from typing import Any
 from app.core.constants import CHANNEL_SECRET_MASK, CHANNEL_SENSITIVE_KEYS
 from app.core.crypto import decrypt, encrypt
 from app.core.logging import get_logger
+from app.core.metrics import M_NOTIFY_DECRYPT, record_failure
 
 logger = get_logger("notify")
 
@@ -34,12 +35,13 @@ def mask_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
+async def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
     """使用前还原：解密敏感字段。
 
-    审查 I6：解密失败（密钥轮换/密文损坏/被误存明文）此前静默回退原值并当凭据使用，
-    会掩盖配置错误并导致网关鉴权失败方向被带偏。此处改为显式记错（仅字段名，不含密文/明文），
-    使其可观测；仍回退原值以让下游发送显式失败（401/业务码失败 → notify_log=failed）。
+    审查 I6/B6：解密失败（密钥轮换/密文损坏/被误存明文）此前静默回退原值并当凭据使用，
+    会掩盖配置错误并导致网关鉴权失败方向被带偏。此处显式记错（仅字段名，不含密文/明文）
+    并上报 M_NOTIFY_DECRYPT 指标（此前该指标定义却零引用），使 /health 可聚合；仍回退原值
+    以让下游发送显式失败（401/业务码失败 → notify_log=failed）。
     """
     out: dict[str, Any] = {}
     for k, v in config.items():
@@ -52,6 +54,7 @@ def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
                     "渠道凭据解密失败，该字段将以原值参与发送并可能导致鉴权失败",
                     extra={"extra_fields": {"field": k}},
                 )
+                await record_failure(M_NOTIFY_DECRYPT, error=f"field={k}")
         else:
             out[k] = v
     return out

@@ -56,12 +56,15 @@ async def test_send_one_isolates_unexpected_exception(fake_redis, monkeypatch):
     assert failures.get(metrics.M_NOTIFY_SEND, {}).get("count") == 1
 
 
-def test_decrypt_config_falls_back_and_logs(caplog):
-    """无法解密的敏感字段回退原值，并记 ERROR（不静默）。"""
+async def test_decrypt_config_falls_back_and_logs(fake_redis, caplog):
+    """无法解密的敏感字段回退原值，记 ERROR 且上报 M_NOTIFY_DECRYPT 指标（不静默）。"""
     import logging
 
     with caplog.at_level(logging.ERROR):
-        out = decrypt_config({"secret": "not-a-valid-fernet-token", "url": "http://x"})
+        out = await decrypt_config({"secret": "not-a-valid-fernet-token", "url": "http://x"})
     assert out["secret"] == "not-a-valid-fernet-token"  # 回退原值
     assert out["url"] == "http://x"  # 非敏感字段原样
     assert any("解密失败" in r.message for r in caplog.records)
+    # 审查 B6：解密失败必须上报指标（此前定义却零引用）
+    failures = await metrics.get_failures()
+    assert failures.get(metrics.M_NOTIFY_DECRYPT, {}).get("count") == 1

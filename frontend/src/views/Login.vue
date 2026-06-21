@@ -16,7 +16,11 @@ interface TokenResp {
 const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(false)
-const form = reactive({ username: 'admin', password: 'admin123' })
+// 审查 F：仅开发环境预填默认凭据，生产构建不暴露
+const form = reactive({
+  username: import.meta.env.DEV ? 'admin' : '',
+  password: import.meta.env.DEV ? 'admin123' : '',
+})
 
 async function onSubmit(): Promise<void> {
   loading.value = true

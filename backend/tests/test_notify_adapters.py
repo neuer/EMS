@@ -10,22 +10,18 @@ def test_supported_types() -> None:
     assert get_adapter("unknown") is None
 
 
-def test_sms_skip_without_phone() -> None:
+async def test_sms_skip_without_phone() -> None:
     adapter = get_adapter("sms")
     assert adapter is not None
     msg = NotifyMessage(subject="s", content="c", level=2, trigger="raise", resource_id="d")
     with pytest.raises(ChannelSkip):
         # 无 phone → 跳过（在发起 HTTP 前抛出）
-        import asyncio
-
-        asyncio.run(adapter.send({"gateway_url": "http://x"}, {"name": "无手机"}, msg))
+        await adapter.send({"gateway_url": "http://x"}, {"name": "无手机"}, msg)
 
 
-def test_email_skip_without_email() -> None:
+async def test_email_skip_without_email() -> None:
     adapter = get_adapter("email")
     assert adapter is not None
     msg = NotifyMessage(subject="s", content="c", level=2, trigger="raise", resource_id="d")
     with pytest.raises(ChannelSkip):
-        import asyncio
-
-        asyncio.run(adapter.send({"smtp_host": "x"}, {"name": "无邮箱"}, msg))
+        await adapter.send({"smtp_host": "x"}, {"name": "无邮箱"}, msg)

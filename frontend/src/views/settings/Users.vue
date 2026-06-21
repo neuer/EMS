@@ -5,6 +5,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { createUser, deleteUser, listUsers, resetPassword, updateUser } from '@/api/users'
 import { ROLE_LABEL, type UserAdmin } from '@/api/types'
 import { useAuthStore } from '@/store/auth'
+import { formatLocal } from '@/lib/datetime'
 
 const auth = useAuthStore()
 const rows = ref<UserAdmin[]>([])
@@ -147,7 +148,9 @@ onMounted(load)
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="created_at" label="创建时间" width="180" />
+      <el-table-column label="创建时间" width="180">
+        <template #default="{ row }">{{ formatLocal(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="200">
         <template #default="{ row }">
           <template v-if="auth.isAdmin">

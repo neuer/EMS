@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import (
     BACKFILL_GAP_THRESHOLD_S,
     BACKFILL_INTERVAL,
+    BACKFILL_MAX_WINDOW_S,
     OFFLINE_MAX_POINTS,
     OFFLINE_MAX_SPAN_S,
     REDIS_BACKFILL_GAP_START,
@@ -32,8 +34,8 @@ from app.core.constants import (
 )
 from app.core.db import AsyncSessionLocal, engine
 from app.core.logging import get_logger
-from app.core.metrics import M_BACKFILL_SLICE, record_failure
-from app.core.redis import redis_client
+from app.core.metrics import M_BACKFILL_SLICE, M_BACKFILL_WATCH, record_failure
+from app.core.redis import redis_client, release_lock_if_owner
 from app.ems.client import EmsClient
 from app.ems.protocol import EmsError
 from app.models.asset import Point
@@ -157,9 +159,10 @@ async def run_backfill(
     if not point_ids or end <= start:
         return BackfillResult(skipped=True, reason="empty")
 
-    # 红线 #5：串行锁，确保同一时间仅一个历史请求
+    # 红线 #5：串行锁，确保同一时间仅一个历史请求。锁值用唯一 token，释放时比对（审查 B1）。
+    lock_token = uuid.uuid4().hex
     acquired = await redis_client.set(
-        REDIS_HISTORY_LOCK, "backfill", nx=True, ex=REDIS_HISTORY_LOCK_TTL
+        REDIS_HISTORY_LOCK, lock_token, nx=True, ex=REDIS_HISTORY_LOCK_TTL
     )
     if not acquired:
         logger.info("已有历史请求在跑，跳过本轮回补")
@@ -175,6 +178,8 @@ async def run_backfill(
             slices = slice_time_range(start, end)
             for batch in batches:  # 按测点分批 ≤100
                 for s, e in slices:  # 按时间分片 ≤1 天
+                    # 审查 B1：持锁者在每个分片前续租 TTL，防止长回补中途锁过期被他人抢占。
+                    await redis_client.expire(REDIS_HISTORY_LOCK, REDIS_HISTORY_LOCK_TTL)
                     try:
                         series = await client.offline_value(s, e, batch, BACKFILL_INTERVAL)
                     except EmsError as exc:
@@ -232,7 +237,7 @@ async def run_backfill(
             logger.error("断连回补失败", extra={"extra_fields": {"error": str(exc)}})
             raise
         finally:
-            await redis_client.delete(REDIS_HISTORY_LOCK)
+            await release_lock_if_owner(REDIS_HISTORY_LOCK, lock_token)
     return result
 
 
@@ -286,11 +291,33 @@ async def backfill_watch() -> None:
         await redis_client.delete(REDIS_BACKFILL_GAP_START)
         return
 
+    # 审查 B2：限制单次回补窗口跨度，防止 last_ts 长期不前进导致窗口无界、分片爆炸。
+    # 截断时保留 gap_start，本轮只补最近窗口，剩余留待下轮续补。
+    if gap_end - gap_start > BACKFILL_MAX_WINDOW_S:
+        capped_end = gap_start + BACKFILL_MAX_WINDOW_S
+        logger.warning(
+            "缺口窗口超上限，本轮仅回补部分窗口，剩余待下轮",
+            extra={"extra_fields": {
+                "gap_start": gap_start, "gap_end": gap_end, "capped_end": capped_end,
+            }},
+        )
+        gap_end = capped_end
+
+    points = await _active_point_ids()
+    if not points:
+        # 审查 B3：无活跃测点时此前 run_backfill 返回 skipped(empty) 被当作「补失败」静默保留缺口，
+        # 每轮空转 warning 且无指标。改为显式记失败指标并提前返回，使其可观测。
+        await record_failure(M_BACKFILL_WATCH, error="no_active_points")
+        logger.warning(
+            "推送已恢复但无活跃测点，无法回补，保留缺口待测点恢复",
+            extra={"extra_fields": {"gap_start": gap_start, "gap_end": gap_end}},
+        )
+        return
+
     logger.info(
         "检测到推送恢复，触发断连回补",
         extra={"extra_fields": {"gap_start": gap_start, "gap_end": gap_end}},
     )
-    points = await _active_point_ids()
     try:
         result = await run_backfill(manager.client, points, gap_start, gap_end)
     except Exception:

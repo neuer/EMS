@@ -32,6 +32,7 @@ import {
   type RecipientGroup,
 } from '@/api/types'
 import { useAuthStore } from '@/store/auth'
+import { formatLocal } from '@/lib/datetime'
 
 const auth = useAuthStore()
 const tab = ref('channels')
@@ -347,7 +348,9 @@ onMounted(loadAll)
       <el-tab-pane label="发送记录" name="logs">
         <el-button size="small" class="mb" @click="loadLogs">刷新</el-button>
         <el-table :data="logs" size="small" border>
-          <el-table-column prop="sent_at" label="时间" width="180" />
+          <el-table-column label="时间" width="180">
+            <template #default="{ row }">{{ formatLocal(row.sent_at) }}</template>
+          </el-table-column>
           <el-table-column prop="recipient" label="接收方" />
           <el-table-column prop="trigger" label="触发" width="90" />
           <el-table-column label="状态" width="90">

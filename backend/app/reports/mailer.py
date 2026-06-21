@@ -16,6 +16,7 @@ from typing import Any
 from app.core.constants import CHANNEL_SENSITIVE_KEYS, NOTIFY_HTTP_TIMEOUT_S
 from app.core.crypto import decrypt
 from app.core.logging import get_logger
+from app.core.metrics import M_NOTIFY_DECRYPT, record_failure
 
 logger = get_logger("notify")
 
@@ -24,20 +25,22 @@ class MailerError(RuntimeError):
     """邮件发送失败。"""
 
 
-def _resolved_password(config: dict[str, Any]) -> str:
+def _resolve_password(config: dict[str, Any]) -> tuple[str, bool]:
+    """返回 (明文密码, 是否解密失败)。解密失败回退原值，由调用方上报指标。"""
     raw = config.get("smtp_password", "")
     if isinstance(raw, str) and raw and "smtp_password" in CHANNEL_SENSITIVE_KEYS:
         try:
-            return decrypt(raw)
+            return decrypt(raw), False
         except ValueError:
-            # 审查 I6：解密失败显式记错（不含密文），回退原值将导致 SMTP 登录失败被显式抛出
+            # 审查 I6/B6：解密失败显式记错（不含密文），回退原值将导致 SMTP 登录显式失败
             logger.error("邮件渠道 smtp_password 解密失败，SMTP 登录可能失败")
-            return raw
-    return raw or ""
+            return raw, True
+    return raw or "", False
 
 
 def _send_sync(
     config: dict[str, Any],
+    password: str,
     to_addrs: list[str],
     subject: str,
     body: str,
@@ -64,7 +67,7 @@ def _send_sync(
             if config.get("use_tls"):
                 server.starttls()
             if config.get("username"):
-                server.login(config["username"], _resolved_password(config))
+                server.login(config["username"], password)
             server.sendmail(from_addr, to_addrs, msg.as_string())
     except (smtplib.SMTPException, OSError) as exc:
         raise MailerError(f"SMTP 发送失败: {exc}") from exc
@@ -80,4 +83,8 @@ async def send_report_mail(
     """异步发送报表邮件（含附件）。config 为邮件渠道原始 config（内部解密密码）。"""
     if not to_addrs:
         raise MailerError("无有效收件人邮箱")
-    await asyncio.to_thread(_send_sync, config, to_addrs, subject, body, attachments)
+    # 审查 B6：在异步上下文预解析密码并上报解密失败指标（_send_sync 在线程内无法 await）。
+    password, decrypt_failed = _resolve_password(config)
+    if decrypt_failed:
+        await record_failure(M_NOTIFY_DECRYPT, error="field=smtp_password")
+    await asyncio.to_thread(_send_sync, config, password, to_addrs, subject, body, attachments)

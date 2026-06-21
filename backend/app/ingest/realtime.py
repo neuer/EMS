@@ -26,6 +26,7 @@ from app.core.constants import (
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.core.metrics import (
+    M_INGEST_PARSE_DROP,
     M_INGEST_PERSIST,
     M_INGEST_REDIS,
     M_RULE_EVAL,
@@ -66,6 +67,7 @@ async def handle_data_push(data: dict[str, Any]) -> int:
     realtime_frame: list[dict[str, Any]] = []
     device_status_rows: list[dict[str, Any]] = []
     now_ts = datetime.now(UTC)
+    dropped = 0  # 审查 F：脏数据（value/save_time 解析失败）丢弃计数，末尾上报一次
 
     pipe = redis_client.pipeline()
     for dev in devices:
@@ -90,9 +92,18 @@ async def handle_data_push(data: dict[str, Any]) -> int:
             save_time = p.get("save_time")
             value = _to_float(raw_value)
             ts = _to_utc(save_time)
+            # 审查 F：脏数据可观测——有原值却解析失败（非合法 None/数值）才计为丢弃
+            if (raw_value is not None and value is None) or (
+                save_time is not None and ts is None
+            ):
+                dropped += 1
 
             key = REDIS_POINT_LATEST.format(point_id=pid)
-            pipe.hset(key, mapping={"value": str(raw_value), "save_time": str(save_time)})
+            # 审查 F：raw_value/save_time 为 None 时存空串，避免下游读到字面量 "None"
+            pipe.hset(key, mapping={
+                "value": "" if raw_value is None else str(raw_value),
+                "save_time": "" if save_time is None else str(save_time),
+            })
             pipe.expire(key, REDIS_LATEST_TTL)
 
             if ts is not None:
@@ -125,8 +136,14 @@ async def handle_data_push(data: dict[str, Any]) -> int:
             if period is not None:
                 try:
                     await redis_client.set(REDIS_BACKFILL_GAP_START, period, nx=True)
-                except Exception:
-                    pass
+                except Exception as gap_exc:
+                    # 审查 C1：缺口标记是「数据不丢」的最后一环；此前裸 pass 吞错会让本批
+                    # 既未落库又未记缺口 → 永久静默丢失且无人可知。改为显式记日志 + 指标。
+                    logger.error(
+                        "落库失败后缺口标记写入也失败，该批数据可能永久丢失",
+                        extra={"extra_fields": {"period": period, "error": str(gap_exc)}},
+                    )
+                    await record_failure(M_INGEST_PERSIST, error=f"gap_mark_failed: {gap_exc}")
 
     # 发布 Pub/Sub（WebSocket 网关 Sprint 2 订阅）
     if realtime_frame:
@@ -151,6 +168,10 @@ async def handle_data_push(data: dict[str, Any]) -> int:
             # 审查 M1：规则评估失败=这批测点越限未被检测（漏判），记指标使其可观测。
             logger.error("规则评估失败", extra={"extra_fields": {"error": str(exc)}})
             await record_failure(M_RULE_EVAL, error=str(exc))
+
+    # 审查 F：本批脏数据丢弃数 >0 时上报一次（避免逐点日志噪声），使数据质量恶化可观测
+    if dropped:
+        await record_failure(M_INGEST_PARSE_DROP, error=f"count={dropped}")
 
     return len(history_rows)
 
