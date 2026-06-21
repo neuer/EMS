@@ -125,8 +125,14 @@ async def handle_data_push(data: dict[str, Any]) -> int:
             if period is not None:
                 try:
                     await redis_client.set(REDIS_BACKFILL_GAP_START, period, nx=True)
-                except Exception:
-                    pass
+                except Exception as gap_exc:
+                    # 审查 C1：缺口标记是「数据不丢」的最后一环；此前裸 pass 吞错会让本批
+                    # 既未落库又未记缺口 → 永久静默丢失且无人可知。改为显式记日志 + 指标。
+                    logger.error(
+                        "落库失败后缺口标记写入也失败，该批数据可能永久丢失",
+                        extra={"extra_fields": {"period": period, "error": str(gap_exc)}},
+                    )
+                    await record_failure(M_INGEST_PERSIST, error=f"gap_mark_failed: {gap_exc}")
 
     # 发布 Pub/Sub（WebSocket 网关 Sprint 2 订阅）
     if realtime_frame:
