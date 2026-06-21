@@ -134,3 +134,19 @@ async def test_resolve_scope_point_to_device_to_space():
     assert cand[RESOURCE_KIND_POINT] == "p1"
     assert cand[RESOURCE_KIND_DEVICE] == "d1"
     assert cand[RESOURCE_KIND_SPACE] == "s1"
+
+
+async def test_resolve_scope_device_entry_to_space():
+    """device 入口分支：解析到自身设备与其父空间。"""
+    objs = {("Device", "d1"): SimpleNamespace(parent_id="s1")}
+    cand = await suppress._resolve_scope_ids(_db(objs=objs), "d1", RESOURCE_KIND_DEVICE)
+    assert cand[RESOURCE_KIND_DEVICE] == "d1"
+    assert cand[RESOURCE_KIND_SPACE] == "s1"
+
+
+async def test_resolve_scope_device_without_parent_short_circuits():
+    """dev.parent_id 为空 → 不解析空间维度（短路分支）。"""
+    objs = {("Device", "d1"): SimpleNamespace(parent_id=None)}
+    cand = await suppress._resolve_scope_ids(_db(objs=objs), "d1", RESOURCE_KIND_DEVICE)
+    assert cand[RESOURCE_KIND_DEVICE] == "d1"
+    assert RESOURCE_KIND_SPACE not in cand
