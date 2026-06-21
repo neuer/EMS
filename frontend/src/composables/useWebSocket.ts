@@ -1,5 +1,6 @@
 import { onUnmounted, ref } from 'vue'
 
+import { router } from '@/router'
 import { useAuthStore } from '@/store/auth'
 
 // 服务端实时帧：{ type:'realtime', points:[{id,value,ts}] }
@@ -29,8 +30,8 @@ export function useRealtimeSocket() {
   let backoff = 1000
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let closedByUser = false
-  let attempts = 0
-  const MAX_ATTEMPTS = 10 // 审查 F：重连次数上限，避免无限重连
+  // 监控场景：瞬时断线（后端重启/反代抖动）应持续重连（退避封顶 30s，不设永久上限），
+  // 仅在鉴权失败（服务端 1008）时彻底停连并登出（审查 F + 复审 I1/I2）。
 
   function buildUrl(): string {
     const auth = useAuthStore()
@@ -55,8 +56,7 @@ export function useRealtimeSocket() {
 
     ws.onopen = () => {
       connected.value = true
-      backoff = 1000
-      attempts = 0 // 连接成功重置重连计数
+      backoff = 1000 // 连接成功重置退避
       sendSubscribe()
     }
 
@@ -77,13 +77,15 @@ export function useRealtimeSocket() {
 
     ws.onclose = (ev: CloseEvent) => {
       connected.value = false
-      // 审查 F：鉴权失败（服务端 1008）→ 停止重连并登出，避免无效循环重连
+      // 鉴权失败（服务端 WS_1008_POLICY_VIOLATION）→ 停止重连、登出并跳登录，避免「假在线」
       if (ev.code === 1008) {
         closedByUser = true
         useAuthStore().clear()
+        void router.push('/login')
         return
       }
-      if (!closedByUser && attempts < MAX_ATTEMPTS) {
+      // 其余断线（瞬时网络/后端重启）持续重连，由退避封顶控制频率
+      if (!closedByUser) {
         scheduleReconnect()
       }
     }
@@ -97,7 +99,6 @@ export function useRealtimeSocket() {
     if (reconnectTimer) {
       return
     }
-    attempts += 1
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       connect()
