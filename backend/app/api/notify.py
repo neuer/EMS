@@ -122,7 +122,7 @@ async def test_channel(
     if adapter is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"不支持的渠道类型 {channel.type}")
     try:
-        await adapter.test(decrypt_config(channel.config or {}))
+        await adapter.test(await decrypt_config(channel.config or {}))
     except ChannelError as exc:
         return ok({"ok": False, "detail": str(exc)})
     return ok({"ok": True, "detail": "连通正常"})

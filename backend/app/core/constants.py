@@ -42,6 +42,8 @@ EMS_SUSTAINED_OUTAGE_RECONNECTS = 3
 # ---- 历史查询 / 断连回补（Sprint 2） ----
 # 历史串行锁：红线 #5「同一时间仅一个历史请求在跑」。offline_value 调用统一经此锁。
 REDIS_HISTORY_LOCK = "lock:history"
+# 用户管理写操作互斥锁：串行化「保留至少一个管理员」守卫，防 TOCTOU 自锁（审查 C3）
+REDIS_USER_ADMIN_LOCK = "lock:user_admin_guard"
 # 锁 TTL（秒）：防止异常未释放导致历史请求永久阻塞
 REDIS_HISTORY_LOCK_TTL = 600
 
@@ -59,6 +61,9 @@ OFFLINE_MAX_SPAN_S = 86400  # 单次跨度 ≤1 天
 
 # 回补巡检：推送静默超过该秒数判定为中断（推送周期 10s，留足余量）
 BACKFILL_GAP_THRESHOLD_S = 45
+# 单次回补窗口跨度上限（秒）：防止 last_ts 长期不前进导致 gap_end 无界增长、分片爆炸
+# 与历史锁中途过期（审查 B1/B2）。超出部分保留缺口待下轮续补。
+BACKFILL_MAX_WINDOW_S = 7 * 86400  # 最多回补最近 7 天
 # 回补使用的降采样粒度（与 5min 连续聚合对齐）
 BACKFILL_INTERVAL = "five"
 

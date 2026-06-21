@@ -118,8 +118,20 @@ async def _send_one(
     """单渠道单接收人发送，含重试，写 notify_logs。"""
     adapter = get_adapter(channel.type)
     if adapter is None:
+        # 审查 B5：未注册渠道类型此前静默 return，告警一条不发且无 log/指标/notify_log，
+        # 运维面板误判正常。改为写 failed 日志 + 指标，使配置错误可观测。
+        db.add(NotifyLog(
+            alarm_id=message.alarm_id, channel_id=channel.id, recipient=recipient.name,
+            trigger=message.trigger, status="failed",
+            error=f"未知渠道类型: {channel.type}", retry_count=0,
+        ))
+        await record_failure(M_NOTIFY_SEND, error=f"unknown_channel_type:{channel.type}")
+        logger.error(
+            "通知渠道类型未注册，告警未发送",
+            extra={"extra_fields": {"channel_id": channel.id, "type": channel.type}},
+        )
         return
-    cfg = decrypt_config(channel.config)
+    cfg = await decrypt_config(channel.config)
     recipient_dict = {
         "name": recipient.name, "phone": recipient.phone, "email": recipient.email,
         "dingtalk_id": recipient.dingtalk_id, "wecom_id": recipient.wecom_id,

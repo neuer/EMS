@@ -24,7 +24,7 @@ from app.core.constants import (
 )
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.core.metrics import M_ALARM_UNMATCHED, record_failure
+from app.core.metrics import M_ALARM_UNMATCHED, M_INGEST_PUSH_HANDLE, record_failure
 from app.engine import lifecycle
 from app.engine.lifecycle import OPEN_STATUSES
 from app.models.alarm import Alarm
@@ -152,7 +152,10 @@ async def handle_alarm_push(data: dict[str, Any]) -> int:
                 else:
                     handled = False
             except Exception as exc:
+                # 审查 B4：单条告警（0/21/30 为高价值）处理失败此前仅记日志无指标，
+                # 漏纳监控发现不了。补失败指标，与 realtime 规则评估失败口径一致。
                 logger.error("处理单条 EMS 告警失败", extra={"extra_fields": {"error": str(exc)}})
+                await record_failure(M_INGEST_PUSH_HANDLE, error=str(exc))
                 handled = False
             if handled:
                 processed += 1
