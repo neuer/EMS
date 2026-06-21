@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # 内置占位默认值（仅允许在开发/测试环境使用）。非开发环境若仍为这些值 → 启动即拒绝。
 # 集中定义以保证「字段默认值」与「fail-fast 校验」的单一事实源。
@@ -38,8 +39,21 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
     # 审查 C1：CORS 允许来源。此前通配 "*" 配合 Bearer token 使任意站点脚本可跨域携带
-    # token 调用。收敛为内网前端实际地址；可由环境变量 CORS_ORIGINS 以逗号/JSON 覆盖。
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8080"]
+    # token 调用。收敛为内网前端实际地址；由环境变量 CORS_ORIGINS 以逗号分隔覆盖。
+    # NoDecode：禁用 pydantic-settings 对 list 字段的 JSON 解码（否则逗号分隔会解析失败），
+    # 改由下方 field_validator 按逗号切分。
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, v: object) -> object:
+        """支持 CORS_ORIGINS 以逗号分隔的字符串注入（亦兼容已是 list 的默认值）。"""
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     # ---- PostgreSQL / TimescaleDB ----
     postgres_host: str = "localhost"
