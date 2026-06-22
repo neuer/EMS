@@ -21,6 +21,7 @@ from app.core.constants import (
     NOTIFY_TRIGGER_RAISE,
     NOTIFY_TRIGGER_RECOVER,
     REDIS_ALARM_MERGE,
+    REDIS_NOTIFY_PENDING,
     RESOURCE_KIND_POINT,
 )
 from app.core.logging import get_logger
@@ -103,10 +104,18 @@ async def publish_pending(db: AsyncSession) -> None:
         try:
             await redis_client.publish(CHANNEL_ALARM_EVENTS, json.dumps(ev, ensure_ascii=False))
         except Exception as exc:
-            # 审查 I8：告警已 commit 但事件发布失败 → 该告警不会触发任何通知（静默丢失）。
-            # 记指标使其可观测；alarm_id 入失败列表供排查/补偿。
-            logger.error("发布告警事件失败", extra={"extra_fields": {"error": str(exc)}})
+            # 审查 I8/M2：告警已 commit 但事件发布失败 → 该告警不会触发任何通知（静默丢失）。
+            # 记指标使其可观测，并把事件入持久化补偿队列由调度器重投，做到「通知不丢」。
+            logger.error("发布告警事件失败，入补偿队列待重投",
+                         extra={"extra_fields": {"error": str(exc)}})
             await record_failure(M_ALARM_PUBLISH, error=str(exc))
+            try:
+                await redis_client.rpush(
+                    REDIS_NOTIFY_PENDING, json.dumps({**ev, "_attempts": 0}, ensure_ascii=False)
+                )
+            except Exception as q_exc:  # 入队也失败：仅降级日志，不反向影响主流程
+                logger.error("补偿队列入队失败，该通知可能丢失",
+                             extra={"extra_fields": {"error": str(q_exc)}})
 
 
 async def raise_alarm(

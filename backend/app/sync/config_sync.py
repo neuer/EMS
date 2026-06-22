@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -13,8 +14,10 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import REDIS_CONFIG_SYNC_LOCK, REDIS_CONFIG_SYNC_LOCK_TTL
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
+from app.core.redis import redis_client, release_lock_if_owner
 from app.ems.client import EmsClient
 from app.models.asset import Device, Point, Space
 from app.models.system import SyncLog
@@ -30,6 +33,7 @@ class SyncResult:
     spaces: int = 0
     devices: int = 0
     points: int = 0
+    skipped: bool = False  # 审查 M5：已有同步在跑而跳过本轮（非失败）
 
     def merge(self, other: SyncResult) -> None:
         self.added += other.added
@@ -136,7 +140,25 @@ async def _upsert(
 
 
 async def run_config_sync(client: EmsClient, batch_size: int = 50) -> SyncResult:
-    """执行一次全量配置同步，写 sync_log，返回统计。"""
+    """执行一次全量配置同步，写 sync_log，返回统计。
+
+    审查 M5：首连/定时/手动同步可能并发触发同一全量 upsert，基于过期 active 快照交叉失活、
+    统计不一致。用 Redis 锁 lock:config_sync 串行化（与 lock:history 同模式），抢不到则跳过。
+    """
+    lock_token = uuid.uuid4().hex
+    acquired = await redis_client.set(
+        REDIS_CONFIG_SYNC_LOCK, lock_token, nx=True, ex=REDIS_CONFIG_SYNC_LOCK_TTL
+    )
+    if not acquired:
+        logger.info("已有配置同步在跑，跳过本轮")
+        return SyncResult(skipped=True)
+    try:
+        return await _run_config_sync_locked(client, batch_size)
+    finally:
+        await release_lock_if_owner(REDIS_CONFIG_SYNC_LOCK, lock_token)
+
+
+async def _run_config_sync_locked(client: EmsClient, batch_size: int) -> SyncResult:
     total = SyncResult()
     async with AsyncSessionLocal() as db:
         log = SyncLog(kind="config")
@@ -195,10 +217,18 @@ async def run_config_sync(client: EmsClient, batch_size: int = 50) -> SyncResult
                 }},
             )
         except Exception as exc:
-            log.finished_at = datetime.now(UTC)
-            log.success = False
-            log.detail = f"同步失败: {exc}"
-            await db.commit()
+            # 审查 I1：失败多源自前面的 upsert/flush，会话已进入 pending-rollback；此前在污染
+            # 会话上二次 commit 会抛 PendingRollbackError 覆盖真实错误、且失败日志写不进。
+            # 先回滚释放会话，再用独立会话写失败 SyncLog，最后抛出真实异常。
+            await db.rollback()
             logger.error("配置同步失败", extra={"extra_fields": {"error": str(exc)}})
+            async with AsyncSessionLocal() as log_db:
+                log_db.add(SyncLog(
+                    kind="config",
+                    finished_at=datetime.now(UTC),
+                    success=False,
+                    detail=f"同步失败: {exc}",
+                ))
+                await log_db.commit()
             raise
     return total

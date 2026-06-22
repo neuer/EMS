@@ -215,11 +215,47 @@ export interface Rule {
   suggest: string | null
 }
 
+// 各渠道 config 的结构化类型（与后端 schemas/notify.py 的判别联合对应）。
+// 敏感字段（secret/token/smtp_password）读出时为脱敏掩码串或 null。
+export interface SmsChannelConfig {
+  gateway_url?: string
+  sign?: string | null
+  account?: string | null
+  secret?: string | null
+}
+export interface EmailChannelConfig {
+  smtp_host?: string
+  smtp_port?: number | null
+  username?: string | null
+  from_addr?: string | null
+  use_tls?: boolean | null
+  smtp_password?: string | null
+}
+export interface RobotChannelConfig {
+  webhook_url?: string
+  secret?: string | null
+}
+export interface VoiceChannelConfig {
+  gateway_url?: string
+  secret?: string | null
+}
+export interface WebhookChannelConfig {
+  url?: string
+  headers?: Record<string, string> | null
+  token?: string | null
+}
+export type ChannelConfig =
+  | SmsChannelConfig
+  | EmailChannelConfig
+  | RobotChannelConfig
+  | VoiceChannelConfig
+  | WebhookChannelConfig
+
 export interface NotifyChannel {
   id: number
   type: string
   name: string
-  config: Record<string, unknown>
+  config: ChannelConfig
   enabled: boolean
 }
 

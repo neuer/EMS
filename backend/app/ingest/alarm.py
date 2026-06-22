@@ -127,8 +127,17 @@ async def _handle_manual(db: AsyncSession, a: dict[str, Any], msg_type: int) -> 
         else:  # EMS_MSG_CONFIRM
             note = (a.get("event_confirm") or {}).get("confirm_des")
             await lifecycle.confirm_alarm(db, alarm, user_id=0, note=note)
-    except ValueError:
-        return False  # 非法状态转移，忽略
+    except ValueError as exc:
+        # 审查 M8：非法状态转移（如对已恢复告警确认）此前纯静默 return；EMS 与平台状态机不一致
+        # 是值得观测的信号，补轻量日志 + 指标使长期漂移可被发现。
+        logger.info(
+            "EMS 回写状态转移非法，忽略",
+            extra={"extra_fields": {
+                "guid": a.get("guid"), "msg_type": msg_type, "error": str(exc),
+            }},
+        )
+        await record_failure(M_ALARM_UNMATCHED, error="state_conflict")
+        return False
     return True
 
 
@@ -143,17 +152,22 @@ async def handle_alarm_push(data: dict[str, Any]) -> int:
             raw_msg = _to_int(a.get("msg_type"))
             msg_type = EMS_MSG_RAISE if raw_msg is None else raw_msg
             try:
-                if msg_type == EMS_MSG_RAISE:
-                    handled = await _handle_raise(db, a)
-                elif msg_type == EMS_MSG_RECOVER:
-                    handled = await _handle_recover(db, a)
-                elif msg_type in (EMS_MSG_ACCEPT, EMS_MSG_CONFIRM):
-                    handled = await _handle_manual(db, a, msg_type)
-                else:
-                    handled = False
+                # 审查 C1：每条告警在独立 savepoint 内处理。单条 flush 失败（约束冲突等）
+                # 仅回滚自身 savepoint、不污染外层会话，保证同批其余高价值告警（0/21/30）
+                # 仍能入库与最终 commit——此前共享会话下一条坏告警会连锁丢整批（红线 #7）。
+                async with db.begin_nested():
+                    if msg_type == EMS_MSG_RAISE:
+                        handled = await _handle_raise(db, a)
+                    elif msg_type == EMS_MSG_RECOVER:
+                        handled = await _handle_recover(db, a)
+                    elif msg_type in (EMS_MSG_ACCEPT, EMS_MSG_CONFIRM):
+                        handled = await _handle_manual(db, a, msg_type)
+                    else:
+                        handled = False
             except Exception as exc:
                 # 审查 B4：单条告警（0/21/30 为高价值）处理失败此前仅记日志无指标，
                 # 漏纳监控发现不了。补失败指标，与 realtime 规则评估失败口径一致。
+                # savepoint 已自动回滚，外层会话仍可用。
                 logger.error("处理单条 EMS 告警失败", extra={"extra_fields": {"error": str(exc)}})
                 await record_failure(M_INGEST_PUSH_HANDLE, error=str(exc))
                 handled = False

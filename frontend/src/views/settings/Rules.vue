@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 
 import { createRule, deleteRule, listRules, updateRule, type RuleInput } from '@/api/rules'
 import { LEVEL_LABEL, type Rule } from '@/api/types'
+import { handleErr } from '@/lib/errors'
 import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
@@ -57,22 +58,30 @@ async function save(): Promise<void> {
     ElMessage.warning('请填写测点 ID')
     return
   }
-  if (editingId.value === null) {
-    await createRule({ ...form })
-    ElMessage.success('规则已创建')
-  } else {
-    await updateRule(editingId.value, { ...form })
-    ElMessage.success('规则已更新')
+  try {
+    if (editingId.value === null) {
+      await createRule({ ...form })
+      ElMessage.success('规则已创建')
+    } else {
+      await updateRule(editingId.value, { ...form })
+      ElMessage.success('规则已更新')
+    }
+    dialog.value = false
+    load()
+  } catch (e) {
+    handleErr(e)
   }
-  dialog.value = false
-  load()
 }
 
 async function remove(r: Rule): Promise<void> {
-  await ElMessageBox.confirm(`确认删除测点 ${r.point_id} 的规则？`, '提示', { type: 'warning' })
-  await deleteRule(r.id)
-  ElMessage.success('已删除')
-  load()
+  try {
+    await ElMessageBox.confirm(`确认删除测点 ${r.point_id} 的规则？`, '提示', { type: 'warning' })
+    await deleteRule(r.id)
+    ElMessage.success('已删除')
+    load()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 onMounted(load)

@@ -16,6 +16,7 @@ from app.notify.channels.base import (
 
 class DingtalkAdapter:
     type = "dingtalk"
+    broadcast = True  # 群机器人：按 webhook_url 投递，不依赖接收人地址
 
     async def send(
         self, config: dict[str, Any], recipient: dict[str, Any], message: NotifyMessage

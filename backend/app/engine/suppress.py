@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RESOURCE_KIND_DEVICE, RESOURCE_KIND_POINT, RESOURCE_KIND_SPACE
@@ -77,6 +77,8 @@ async def maintenance_silenced(
     全部 record_silenced=False 则应直接丢弃。
     """
     cand = await _resolve_scope_ids(db, resource_id, resource_kind)
+    # 审查 I10：把生效时间谓词下推到 SQL，仅取当前生效的窗口，避免每条告警全表扫描后在内存过滤。
+    # NULL 边界视为无界（与 within_window 一致）；within_window 仍作最终精确判定。
     windows = (
         await db.execute(
             select(
@@ -85,6 +87,9 @@ async def maintenance_silenced(
                 MaintenanceWindow.start_at,
                 MaintenanceWindow.end_at,
                 MaintenanceWindow.record_silenced,
+            ).where(
+                or_(MaintenanceWindow.start_at.is_(None), MaintenanceWindow.start_at <= now),
+                or_(MaintenanceWindow.end_at.is_(None), MaintenanceWindow.end_at >= now),
             )
         )
     ).all()

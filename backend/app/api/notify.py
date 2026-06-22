@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_role
+from app.api.deps import require_idempotency, require_role
 from app.core.db import get_db
 from app.core.security import Role
 from app.models.notify import (
@@ -38,6 +38,8 @@ from app.schemas.notify import (
     RouteInput,
     RouteOutput,
     RouteUpdate,
+    build_channel_config_out,
+    has_contact,
 )
 
 router = APIRouter(prefix="/notify", tags=["通知配置"])
@@ -46,7 +48,11 @@ router = APIRouter(prefix="/notify", tags=["通知配置"])
 # ---------------- 渠道 ----------------
 def _channel_dump(c: NotifyChannel) -> dict[str, object]:
     return ChannelOutput(
-        id=c.id, type=c.type, name=c.name, config=mask_config(c.config or {}), enabled=c.enabled
+        id=c.id,
+        type=c.type,
+        name=c.name,
+        config=build_channel_config_out(c.type, mask_config(c.config or {})),
+        enabled=c.enabled,
     ).model_dump()
 
 
@@ -63,10 +69,14 @@ async def list_channels(
 async def create_channel(
     body: ChannelInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     channel = NotifyChannel(
-        type=body.type, name=body.name, config=encrypt_config(body.config), enabled=body.enabled
+        type=body.type,
+        name=body.name,
+        config=encrypt_config(body.config_for_storage()),
+        enabled=body.enabled,
     )
     db.add(channel)
     await db.commit()
@@ -142,6 +152,7 @@ async def list_recipients(
 async def create_recipient(
     body: RecipientInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     r = Recipient(**body.model_dump())
@@ -163,6 +174,13 @@ async def update_recipient(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "接收人不存在")
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(r, key, value)
+    # 审查 M3：部分更新可能清空唯一联系方式，使接收人不可触达且通知时被静默跳过。
+    # 合并后复验至少保留一种联系方式（与创建口径一致）。
+    if not has_contact(r.phone, r.email, r.dingtalk_id, r.wecom_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "接收人至少需要一种联系方式（phone/email/dingtalk_id/wecom_id）",
+        )
     await db.commit()
     await db.refresh(r)
     return ok(RecipientOutput.model_validate(r, from_attributes=True).model_dump())
@@ -219,6 +237,7 @@ async def list_groups(
 async def create_group(
     body: GroupInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     g = RecipientGroup(name=body.name)
@@ -279,6 +298,7 @@ async def list_routes(
 async def create_route(
     body: RouteInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     route = NotifyRoute(**body.model_dump())

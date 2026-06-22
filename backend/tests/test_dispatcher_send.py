@@ -56,6 +56,62 @@ async def test_send_one_isolates_unexpected_exception(fake_redis, monkeypatch):
     assert failures.get(metrics.M_NOTIFY_SEND, {}).get("count") == 1
 
 
+async def test_broadcast_channel_delivers_once_without_recipients(fake_redis, monkeypatch):
+    """审查 H1：群机器人渠道（webhook/钉钉/企微）即使路由无接收组，也必须发送一次——
+    此前 channels×recipients 嵌套循环在 recipients 为空时一条都不发、不记日志/指标。"""
+    sent_calls: list[dict] = []
+
+    class _BroadcastAdapter:
+        type = "webhook"
+        broadcast = True
+
+        async def send(self, config, recipient, message):
+            sent_calls.append({"recipient": recipient})
+            return "http://hook"
+
+    monkeypatch.setattr(dispatcher, "get_adapter", lambda _t: _BroadcastAdapter())
+    db = _FakeDB()
+    channel = SimpleNamespace(type="webhook", config={}, id=1, name="运维群机器人")
+    targets = dispatcher._Targets(
+        route=cast("dispatcher.NotifyRoute", SimpleNamespace(notify_on_recover=True)),
+        channels=[cast(NotifyChannel, channel)],
+        recipients=[],  # 接收组为空
+    )
+
+    sent = await dispatcher._deliver(cast(AsyncSession, db), targets, _MSG)
+
+    assert sent == 1  # 群机器人发送一次
+    assert len(sent_calls) == 1
+    log = cast(NotifyLog, db.added[0])
+    assert log.status == "sent"
+
+
+async def test_p2p_channel_skips_when_no_recipients(fake_redis, monkeypatch):
+    """点对点渠道（短信等）无接收人时不发送（无地址可投递），但不静默——记 warning。"""
+    sent_calls: list[dict] = []
+
+    class _P2PAdapter:
+        type = "sms"
+        broadcast = False
+
+        async def send(self, config, recipient, message):
+            sent_calls.append({"recipient": recipient})
+            return "138..."
+
+    monkeypatch.setattr(dispatcher, "get_adapter", lambda _t: _P2PAdapter())
+    db = _FakeDB()
+    channel = SimpleNamespace(type="sms", config={}, id=2, name="短信")
+    targets = dispatcher._Targets(
+        route=cast("dispatcher.NotifyRoute", SimpleNamespace(notify_on_recover=True)),
+        channels=[cast(NotifyChannel, channel)],
+        recipients=[],
+    )
+
+    sent = await dispatcher._deliver(cast(AsyncSession, db), targets, _MSG)
+    assert sent == 0
+    assert sent_calls == []
+
+
 async def test_decrypt_config_falls_back_and_logs(fake_redis, caplog):
     """无法解密的敏感字段回退原值，记 ERROR 且上报 M_NOTIFY_DECRYPT 指标（不静默）。"""
     import logging

@@ -12,9 +12,27 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import IDEMPOTENCY_TTL_S, REDIS_IDEMPOTENCY
 from app.core.db import get_db
+from app.core.redis import redis_client
 from app.core.security import decode_access_token, role_satisfies
 from app.models.user import User
+
+
+async def require_idempotency(
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> None:
+    """写操作幂等守卫（红线 §18）：携带 Idempotency-Key 时用 Redis SETNX 预留键，
+    短窗口内重复键直接 409，避免重复执行副作用（如重复触发报表邮件、重复建记录）。
+    预留式去重，非完整响应重放；未携带 Key 时放行（向后兼容）。
+    """
+    if not idempotency_key:
+        return
+    reserved = await redis_client.set(
+        REDIS_IDEMPOTENCY.format(key=idempotency_key), "1", nx=True, ex=IDEMPOTENCY_TTL_S
+    )
+    if not reserved:
+        raise HTTPException(status.HTTP_409_CONFLICT, "重复请求（Idempotency-Key 已使用）")
 
 
 async def get_current_user(

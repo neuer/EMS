@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -20,11 +21,30 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.constants import AlarmSource, AlarmStatus, ResourceKind
 from app.core.db import Base
+
+# 审查 M4：状态/来源/操作符等封闭域此前仅靠注释，DB 层无约束。下列 CHECK 让 DB 成为最后防线，
+# 拦截绕过 Pydantic 的非法写入（迁移/回补/内部 service 直接构造）。取值复用枚举/Literal 防漂移。
+_OPERATORS = (">", "<", "=", "<>", "<=", ">=")
+_COND_TYPES = ("threshold", "range")
+
+
+def _sql_in(column: str, values: tuple[object, ...]) -> str:
+    items = ", ".join(f"'{v}'" if isinstance(v, str) else str(int(v)) for v in values)  # type: ignore[arg-type]
+    return f"{column} IN ({items})"
 
 
 class AlarmRule(Base):
     __tablename__ = "alarm_rules"
+    __table_args__ = (
+        CheckConstraint(_sql_in("operator", _OPERATORS), name="ck_alarm_rules_operator"),
+        CheckConstraint(
+            f"restore_operator IS NULL OR {_sql_in('restore_operator', _OPERATORS)}",
+            name="ck_alarm_rules_restore_operator",
+        ),
+        CheckConstraint(_sql_in("cond_type", _COND_TYPES), name="ck_alarm_rules_cond_type"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     point_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -58,6 +78,13 @@ class AlarmRule(Base):
 
 class Alarm(Base):
     __tablename__ = "alarms"
+    __table_args__ = (
+        CheckConstraint(_sql_in("source", tuple(AlarmSource)), name="ck_alarms_source"),
+        CheckConstraint(_sql_in("status", tuple(AlarmStatus)), name="ck_alarms_status"),
+        CheckConstraint(
+            _sql_in("resource_kind", tuple(ResourceKind)), name="ck_alarms_resource_kind"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # platform | ems

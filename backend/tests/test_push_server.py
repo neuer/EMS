@@ -60,15 +60,49 @@ async def test_alarm_push_returns_fixed_ack(fake_redis, monkeypatch) -> None:
     assert resp == _ACK
 
 
-async def test_dirty_body_is_tolerated(fake_redis, monkeypatch) -> None:
-    """json() 抛错时 _read_data 回退空 dict，仍正常 ack（不 500）。"""
-    seen: dict[str, Any] = {}
+async def test_dirty_body_records_parse_failure_and_acks(fake_redis, monkeypatch) -> None:
+    """审查 S1：json() 抛错（畸形 JSON）时不得静默把 {} 喂给 handler——那会让 EMS 报文
+    格式漂移导致整批静默丢弃而面板显示正常。应记 parse_failed 指标且不调用 handler，仍 ack。"""
+    called = False
 
-    async def _handle(data: dict[str, Any]) -> int:
-        seen["data"] = data
+    async def _handle(_data: dict[str, Any]) -> int:
+        nonlocal called
+        called = True
         return 0
 
     monkeypatch.setattr(push_server, "handle_data_push", _handle)
     resp = await push_server.online_data_push(cast(Request, _Req(None, raise_on_json=True)))
+    assert resp == _ACK  # 仍 ack，避免 EMS 重试风暴
+    assert called is False  # 解析失败不喂空包给 handler
+    failures = await metrics.get_failures()
+    assert failures.get(metrics.M_INGEST_PUSH_HANDLE, {}).get("count") == 1  # 解析失败可观测
+
+
+async def test_non_dict_body_records_parse_failure(fake_redis, monkeypatch) -> None:
+    """body 解析出非 dict（如裸数组/字符串）同样视为解析失败，记指标且不喂 handler。"""
+    called = False
+
+    async def _handle(_data: dict[str, Any]) -> int:
+        nonlocal called
+        called = True
+        return 0
+
+    monkeypatch.setattr(push_server, "handle_alarm_push", _handle)
+    resp = await push_server.online_alarm_push(cast(Request, _Req(["not", "a", "dict"])))
     assert resp == _ACK
-    assert seen["data"] == {}  # 脏 body → 空 data
+    assert called is False
+    failures = await metrics.get_failures()
+    assert failures.get(metrics.M_INGEST_PUSH_HANDLE, {}).get("count") == 1
+
+
+async def test_legit_empty_body_is_not_a_failure(fake_redis, monkeypatch) -> None:
+    """合法空包（dict 但缺 data 键）走正常 0 计数，不计解析失败。"""
+    async def _handle(data: dict[str, Any]) -> int:
+        assert data == {}
+        return 0
+
+    monkeypatch.setattr(push_server, "handle_data_push", _handle)
+    resp = await push_server.online_data_push(cast(Request, _Req({})))
+    assert resp == _ACK
+    failures = await metrics.get_failures()
+    assert metrics.M_INGEST_PUSH_HANDLE not in failures  # 合法空包不算失败

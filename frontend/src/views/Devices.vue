@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { fetchDevices, fetchPoints } from '@/api/assets'
 import type { DeviceItem, PointItem } from '@/api/types'
 
 const router = useRouter()
+const route = useRoute()
 const tab = ref('devices')
 const devices = ref<DeviceItem[]>([])
 const points = ref<PointItem[]>([])
@@ -40,6 +41,12 @@ function statusTag(s: number | null): { type: string; text: string } {
 }
 
 onMounted(() => {
+  // 审查 I9：从拓扑「查看测点」跳转携带 ?d=<resource_id> 时，按该设备过滤并切到测点标签
+  const d = route.query.d
+  if (typeof d === 'string' && d) {
+    ptDevice.value = d
+    tab.value = 'points'
+  }
   loadDevices()
   loadPoints()
 })

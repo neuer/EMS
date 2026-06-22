@@ -24,19 +24,31 @@ router = APIRouter(prefix="/north", tags=["EMS 推送接收"])
 _ACK = {"error_code": 0, "error_msg": "ok", "data": {"status": True}}
 
 
-async def _read_data(request: Request) -> dict[str, Any]:
-    try:
-        body = await request.json()
-    except Exception:
-        return {}
-    return body.get("data", {}) if isinstance(body, dict) else {}
+async def _parse_data(request: Request) -> dict[str, Any]:
+    """解析推送包体的 data 段。
+
+    审查 S1：解析失败（非法 JSON / body 非 dict）必须抛出，由端点记 parse_failed 指标——
+    区别于「合法空包」（dict 但缺 data 键，返回 {}）。此前裸 except 一律回退 {} 会让 EMS
+    报文格式漂移（版本/编码/包头变化）导致每一条推送被静默丢弃而面板显示正常，是监控平台
+    最危险的故障模式（自身失明）。
+    """
+    body = await request.json()  # 非法 JSON 抛异常，由端点捕获
+    if not isinstance(body, dict):
+        raise ValueError("推送包体非 JSON 对象")
+    return body.get("data", {})
 
 
 @router.post("/online_data_push")
 async def online_data_push(request: Request) -> dict[str, Any]:
     """实时数据推送接收。无论处理结果如何都需 ack，避免 EMS 重试风暴；
-    处理异常记录日志（不静默吞错）。"""
-    data = await _read_data(request)
+    解析失败与处理失败均记指标（不静默吞错）。"""
+    try:
+        data = await _parse_data(request)
+    except Exception as exc:
+        # 审查 S1：包体解析失败始终 ack（避免重试风暴），但必须记指标使「报文漂移」可观测。
+        logger.error("实时推送包体解析失败", extra={"extra_fields": {"error": str(exc)}})
+        await record_failure(M_INGEST_PUSH_HANDLE, error=f"parse_failed: {exc}")
+        return _ACK
     try:
         count = await handle_data_push(data)
         logger.info("收到实时数据推送", extra={"extra_fields": {"points": count}})
@@ -52,7 +64,12 @@ async def online_data_push(request: Request) -> dict[str, Any]:
 async def online_alarm_push(request: Request) -> dict[str, Any]:
     """告警推送接收。红线 #7：仅纳 event_type∈{0,21,30}，阈值类丢弃去重。
     无论处理结果如何都 ack，避免 EMS 重试风暴。"""
-    data = await _read_data(request)
+    try:
+        data = await _parse_data(request)
+    except Exception as exc:
+        logger.error("告警推送包体解析失败", extra={"extra_fields": {"error": str(exc)}})
+        await record_failure(M_INGEST_PUSH_HANDLE, error=f"parse_failed: {exc}")
+        return _ACK
     try:
         count = await handle_alarm_push(data)
         logger.info("收到告警推送", extra={"extra_fields": {"processed": count}})

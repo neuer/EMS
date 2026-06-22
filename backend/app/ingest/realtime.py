@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     CHANNEL_REALTIME,
+    REALTIME_FALLBACK_GAP_S,
     REDIS_BACKFILL_GAP_START,
     REDIS_DEVICE_STATUS,
     REDIS_EMS_CONN,
@@ -113,6 +114,9 @@ async def handle_data_push(data: dict[str, Any]) -> int:
     # 写最新值 + last_push 状态（wall clock）+ 数据周期（供回补缺口判定）
     pipe.hset(REDIS_EMS_CONN, "last_push", int(time.time()))
     period = _to_int(data.get("period"))
+    # 审查 S2：在 pipeline 推进 last_ts 之前读取「本批之前的最后有效时刻」，供落库失败时
+    # 作为缺口起点——否则缺口起点会等于本批 period，使 gap_start==gap_end 被 backfill_watch 删除。
+    prev_last_ts = _to_int(await redis_client.get(REDIS_INGEST_LAST_TS))
     if period is not None:
         pipe.set(REDIS_INGEST_LAST_TS, period)
     try:
@@ -134,8 +138,15 @@ async def handle_data_push(data: dict[str, Any]) -> int:
             logger.error("实时数据落库失败", extra={"extra_fields": {"error": str(exc)}})
             await record_failure(M_INGEST_PERSIST, error=str(exc))
             if period is not None:
+                # 审查 S2：缺口起点取「本批之前的最后有效时刻」；无更早时刻时回退 period-步长。
+                # 关键是 gap_start < period(=last_ts)，使回补窗口 [gap_start, period] 非空。
+                gap_start = (
+                    prev_last_ts
+                    if prev_last_ts is not None and prev_last_ts < period
+                    else period - REALTIME_FALLBACK_GAP_S
+                )
                 try:
-                    await redis_client.set(REDIS_BACKFILL_GAP_START, period, nx=True)
+                    await redis_client.set(REDIS_BACKFILL_GAP_START, gap_start, nx=True)
                 except Exception as gap_exc:
                     # 审查 C1：缺口标记是「数据不丢」的最后一环；此前裸 pass 吞错会让本批
                     # 既未落库又未记缺口 → 永久静默丢失且无人可知。改为显式记日志 + 指标。
@@ -155,11 +166,13 @@ async def handle_data_push(data: dict[str, Any]) -> int:
         except Exception as exc:
             logger.error("发布实时帧失败", extra={"extra_fields": {"error": str(exc)}})
 
-    # 喂规则引擎（Sprint 3）：仅数值型测点参与阈值评估
+    # 喂规则引擎（Sprint 3）：仅数值型测点参与阈值评估。
+    # 审查 C3：ts 用 _to_int 容错——此前 int(f["ts"]) 遇脏 save_time（非数字串）会抛 ValueError
+    # 拖垮整批 evaluate_batch（本批所有测点漏判越限）。逐点剔除坏时间戳而非整批崩溃。
     eval_items = [
-        (f["id"], f["value"], int(f["ts"]))
+        (f["id"], f["value"], ts)
         for f in realtime_frame
-        if f["value"] is not None and f["ts"] is not None
+        if f["value"] is not None and (ts := _to_int(f["ts"])) is not None
     ]
     if eval_items:
         try:

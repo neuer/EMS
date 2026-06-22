@@ -4,8 +4,9 @@ import { onMounted, reactive, ref } from 'vue'
 
 import { createUser, deleteUser, listUsers, resetPassword, updateUser } from '@/api/users'
 import { ROLE_LABEL, type UserAdmin } from '@/api/types'
-import { useAuthStore } from '@/store/auth'
 import { formatLocal } from '@/lib/datetime'
+import { handleErr } from '@/lib/errors'
+import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
 const rows = ref<UserAdmin[]>([])
@@ -109,14 +110,6 @@ async function remove(u: UserAdmin): Promise<void> {
   } catch (e) {
     if (e !== 'cancel') handleErr(e)
   }
-}
-
-// 将后端结构化错误（如「必须至少保留一个启用的管理员」）友好呈现
-function handleErr(e: unknown): void {
-  const msg =
-    (e as { response?: { data?: { msg?: string; detail?: string } } })?.response?.data?.msg ||
-    (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-  if (msg) ElMessage.error(msg)
 }
 
 onMounted(load)

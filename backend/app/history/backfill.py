@@ -34,7 +34,12 @@ from app.core.constants import (
 )
 from app.core.db import AsyncSessionLocal, engine
 from app.core.logging import get_logger
-from app.core.metrics import M_BACKFILL_SLICE, M_BACKFILL_WATCH, record_failure
+from app.core.metrics import (
+    M_BACKFILL_SLICE,
+    M_BACKFILL_WATCH,
+    M_CAGG_REFRESH,
+    record_failure,
+)
 from app.core.redis import redis_client, release_lock_if_owner
 from app.ems.client import EmsClient
 from app.ems.protocol import EmsError
@@ -143,8 +148,11 @@ async def _refresh_cagg(start: int, end: int) -> None:
                 {"s": _utc(start), "e": _utc(end + 600)},
             )
     except Exception as exc:
+        # 审查 M8：物化失败仅 warning 而无指标时，降采样层可能长期缺数而无人知。补指标使其
+        # 可被 /health 聚合（仍不阻断，聚合策略会兜底）。
         logger.warning("刷新 5min 连续聚合失败（将由聚合策略兜底）",
                        extra={"extra_fields": {"error": str(exc)}})
+        await record_failure(M_CAGG_REFRESH, error=str(exc))
 
 
 async def run_backfill(
@@ -230,11 +238,18 @@ async def run_backfill(
                 }},
             )
         except Exception as exc:
-            log.finished_at = datetime.now(UTC)
-            log.success = False
-            log.detail = f"回补失败: {exc}"
-            await db.commit()
+            # 审查 I1：失败可能源自落库 flush，会话已进入 pending-rollback；在污染会话上二次
+            # commit 会抛错覆盖真实异常、失败日志也写不进。先回滚，再用独立会话写失败 SyncLog。
+            await db.rollback()
             logger.error("断连回补失败", extra={"extra_fields": {"error": str(exc)}})
+            async with AsyncSessionLocal() as log_db:
+                log_db.add(SyncLog(
+                    kind="backfill",
+                    finished_at=datetime.now(UTC),
+                    success=False,
+                    detail=f"回补失败: {exc}",
+                ))
+                await log_db.commit()
             raise
         finally:
             await release_lock_if_owner(REDIS_HISTORY_LOCK, lock_token)

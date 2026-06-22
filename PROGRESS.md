@@ -130,6 +130,28 @@ ems_mock(:9000)  ⇄  backend(:8000, FastAPI)  ⇄  db(TimescaleDB) / redis
 ```bash
 make up                                   # 起栈
 make e2e        # 或 NO_UP=1 bash scripts/e2e_smoke.sh   # 端到端冒烟（8/8）
-cd backend && uv run ruff check . && uv run pytest -q    # 69 passed
+cd backend && uv run ruff check . && uv run pytest -q    # 204 passed
 make backup / make restore FILE=...       # 备份/恢复
 ```
+
+## 9. 全库审查问题修复（2026-06-21）
+
+对全库做了 6 个专项 agent 审查并修复全部高/中价值问题（计划见 `.claude/plans/`）。后端
+`ruff + pyright` 全绿、`pytest` 204 passed（基线 153，新增 51 用例）；前端 `tsc + biome` 全绿。
+
+要点：
+- 丢数据/失明：S1 推送畸形包体记 `parse_failed` 指标不再静默丢弃；S2 落库失败缺口起点取「本批
+  之前最后有效时刻」，修复「最近一批失败时缺口被 backfill_watch 当空窗口删除、永不回补」。
+- 通知：H1 群机器人渠道在零接收组时 deliver-once；M2 发布失败入 `notify:pending_events` 补偿
+  队列由调度器重投（新增 `retry_pending_notify` 任务）。
+- 安全/类型：H2 渠道 config 改判别联合（消除 `dict[str,Any]`，Output 类型化脱敏）；H3 补 RBAC
+  守卫强制执行测试；M4 新增迁移 0002 对 alarms/alarm_rules 封闭域加 CHECK（DB 最后防线）。
+- 可观测/健壮：M1 显式 need_relogin + `M_EMS_RELOGIN`；M5 config_sync 加 `lock:config_sync` 串行；
+  M8 心跳/连续聚合/摘要 meta/状态冲突补指标。
+
+### 已知缺口（用户已确认本轮范围）
+- 抑制谓词（`maintenance_silenced`/`is_muted`）与 `query_history` 的**真实 SQL 集成测试**需
+  Postgres/TimescaleDB 夹具，超出离线确定性门禁；本轮以离线纯函数测试覆盖时间转换
+  （`test_history_time.py`）与选层逻辑，真实 SQL 集成测试留作后续（需引入 PG 测试夹具）。
+- `device_status.status` 来源于 EMS（外部、取值不完全可控），未加 CHECK 约束以免非常规状态码
+  阻断实时落库（宁可记录也不丢数据）。M4 CHECK 仅覆盖平台完全可控的 alarms/alarm_rules 字段。

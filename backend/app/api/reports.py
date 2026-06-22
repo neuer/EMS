@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_idempotency, require_role
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import Role
@@ -143,6 +143,7 @@ async def list_schedules(
 async def create_schedule(
     body: ReportScheduleInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     sched = ReportSchedule(
@@ -193,6 +194,7 @@ async def delete_schedule(
 async def run_schedule_now(
     schedule_id: int,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     sched = await db.get(ReportSchedule, schedule_id)

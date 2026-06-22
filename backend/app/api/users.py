@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_role
+from app.api.deps import require_idempotency, require_role
 from app.core.constants import REDIS_USER_ADMIN_LOCK
 from app.core.db import get_db
 from app.core.redis import redis_client, release_lock_if_owner
@@ -104,6 +104,7 @@ async def list_users(
 async def create_user(
     body: UserCreateInput,
     _: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     exists = (

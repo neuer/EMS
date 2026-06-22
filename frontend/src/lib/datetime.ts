@@ -18,3 +18,13 @@ export function formatLocalTime(value: string | number | null | undefined): stri
   if (Number.isNaN(date.getTime())) return '—'
   return date.toLocaleTimeString('zh-CN', { hour12: false })
 }
+
+/** 把日期选择器产出的本地无时区串（"YYYY-MM-DDTHH:mm:ss"）转为带时区的 UTC ISO 串。
+ * 审查 C2：后端按 UTC 入库（红线 #10），直接提交无时区串会被当成 UTC 造成 8 小时偏移。
+ * `new Date(local)` 按本地时区解析，`toISOString()` 输出带 Z 的 UTC，消除偏移。空值返回 null。 */
+export function toIsoUtc(local: string | null | undefined): string | null {
+  if (!local) return null
+  const date = new Date(local)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
+}

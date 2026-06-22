@@ -45,7 +45,10 @@ onMounted(async () => {
   keyPoints.value = pts.slice(0, 12)
   connect()
   subscribe(keyPoints.value.map((p) => p.resource_id))
-  timer = setInterval(refresh, 15000)
+  // 轮询回调包错误吞吐：单次请求失败不应产生未捕获 promise 异常，也不中断后续轮询
+  timer = setInterval(() => {
+    refresh().catch((e) => console.error('Dashboard 轮询刷新失败', e))
+  }, 15000)
 })
 
 onUnmounted(() => {

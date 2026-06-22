@@ -10,14 +10,23 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.constants import BACKFILL_GAP_THRESHOLD_S, NOTIFY_DIGEST_INTERVAL_S
+from app.core.constants import (
+    BACKFILL_GAP_THRESHOLD_S,
+    NOTIFY_DIGEST_INTERVAL_S,
+    NOTIFY_RETRY_INTERVAL_S,
+)
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.core.metrics import M_BACKFILL_WATCH, M_CONFIG_SYNC, record_failure
+from app.core.metrics import (
+    M_BACKFILL_WATCH,
+    M_CONFIG_SYNC,
+    M_NOTIFY_DIGEST,
+    record_failure,
+)
 from app.ems.connection import get_manager
 from app.history.backfill import backfill_watch
 from app.models.system import EmsConfig, ReportSchedule
-from app.notify.dispatcher import flush_digests
+from app.notify.dispatcher import flush_digests, retry_pending_events
 from app.reports.service import run_report_schedule
 
 logger = get_logger("sync")
@@ -57,7 +66,17 @@ async def _scheduled_flush_digests() -> None:
     try:
         await flush_digests()
     except Exception as exc:
+        # 审查 I2：摘要刷新整体失败此前仅记日志、/health 无指标可见，运维无感。补失败指标。
         logger.error("摘要刷新失败", extra={"extra_fields": {"error": str(exc)}})
+        await record_failure(M_NOTIFY_DIGEST, error=str(exc))
+
+
+async def _scheduled_retry_pending_notify() -> None:
+    """告警事件发布失败补偿：周期重投补偿队列中的事件（审查 M2，自身吞错）。"""
+    try:
+        await retry_pending_events()
+    except Exception as exc:
+        logger.error("告警事件重投失败", extra={"extra_fields": {"error": str(exc)}})
 
 
 async def _run_report_job(schedule_id: int) -> None:
@@ -157,6 +176,15 @@ async def start_scheduler() -> None:
         "interval",
         seconds=NOTIFY_DIGEST_INTERVAL_S,
         id="flush_digests",
+        max_instances=1,
+        coalesce=True,
+    )
+    # 告警事件发布失败补偿重投（审查 M2）
+    _scheduler.add_job(
+        _scheduled_retry_pending_notify,
+        "interval",
+        seconds=NOTIFY_RETRY_INTERVAL_S,
+        id="retry_pending_notify",
         max_instances=1,
         coalesce=True,
     )

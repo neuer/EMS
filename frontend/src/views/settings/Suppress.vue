@@ -11,6 +11,8 @@ import {
   listWindows,
 } from '@/api/suppress'
 import type { MaintenanceWindow, PointMute } from '@/api/types'
+import { formatLocal, toIsoUtc } from '@/lib/datetime'
+import { handleErr } from '@/lib/errors'
 import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
@@ -58,24 +60,33 @@ async function saveWin(): Promise<void> {
     ElMessage.warning('请填写适用范围 ID 与起止时间')
     return
   }
-  await createWindow({
-    name: winForm.name || null,
-    scope_kind: winForm.scope_kind,
-    scope_ids: ids,
-    start_at: winForm.range[0],
-    end_at: winForm.range[1],
-    record_silenced: winForm.record_silenced,
-  })
-  ElMessage.success('维护窗口已创建')
-  winDialog.value = false
-  load()
+  try {
+    await createWindow({
+      name: winForm.name || null,
+      scope_kind: winForm.scope_kind,
+      scope_ids: ids,
+      // 审查 C2：本地时间转 UTC ISO 再提交，避免后端按 UTC 入库造成 8 小时偏移
+      start_at: toIsoUtc(winForm.range[0]) ?? winForm.range[0],
+      end_at: toIsoUtc(winForm.range[1]) ?? winForm.range[1],
+      record_silenced: winForm.record_silenced,
+    })
+    ElMessage.success('维护窗口已创建')
+    winDialog.value = false
+    load()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 
 async function removeWin(w: MaintenanceWindow): Promise<void> {
-  await ElMessageBox.confirm('确认删除该维护窗口？', '提示', { type: 'warning' })
-  await deleteWindow(w.id)
-  ElMessage.success('已删除')
-  load()
+  try {
+    await ElMessageBox.confirm('确认删除该维护窗口？', '提示', { type: 'warning' })
+    await deleteWindow(w.id)
+    ElMessage.success('已删除')
+    load()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 function openMute(): void {
@@ -88,22 +99,31 @@ async function saveMute(): Promise<void> {
     ElMessage.warning('请填写测点 ID')
     return
   }
-  await createMute({
-    point_id: muteForm.point_id,
-    reason: muteForm.reason || null,
-    start_at: muteForm.range[0] || null,
-    end_at: muteForm.range[1] || null,
-  })
-  ElMessage.success('屏蔽已创建')
-  muteDialog.value = false
-  load()
+  try {
+    await createMute({
+      point_id: muteForm.point_id,
+      reason: muteForm.reason || null,
+      // 审查 C2：本地时间转 UTC ISO 再提交
+      start_at: toIsoUtc(muteForm.range[0]),
+      end_at: toIsoUtc(muteForm.range[1]),
+    })
+    ElMessage.success('屏蔽已创建')
+    muteDialog.value = false
+    load()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 
 async function removeMute(m: PointMute): Promise<void> {
-  await ElMessageBox.confirm(`确认解除测点 ${m.point_id} 的屏蔽？`, '提示', { type: 'warning' })
-  await disableMute(m.id)
-  ElMessage.success('已解除')
-  load()
+  try {
+    await ElMessageBox.confirm(`确认解除测点 ${m.point_id} 的屏蔽？`, '提示', { type: 'warning' })
+    await disableMute(m.id)
+    ElMessage.success('已解除')
+    load()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 onMounted(load)
@@ -128,8 +148,12 @@ onMounted(load)
         <el-table-column label="对象" min-width="160">
           <template #default="{ row }">{{ row.scope_ids.join(', ') }}</template>
         </el-table-column>
-        <el-table-column prop="start_at" label="开始" width="180" />
-        <el-table-column prop="end_at" label="结束" width="180" />
+        <el-table-column label="开始" width="180">
+          <template #default="{ row }">{{ formatLocal(row.start_at) }}</template>
+        </el-table-column>
+        <el-table-column label="结束" width="180">
+          <template #default="{ row }">{{ formatLocal(row.end_at) }}</template>
+        </el-table-column>
         <el-table-column label="记录静默告警" width="120">
           <template #default="{ row }">{{ row.record_silenced ? '是' : '否' }}</template>
         </el-table-column>
@@ -162,9 +186,11 @@ onMounted(load)
       <el-table :data="mutes" size="small" border>
         <el-table-column prop="point_id" label="测点 ID" width="160" />
         <el-table-column prop="reason" label="原因" />
-        <el-table-column prop="start_at" label="开始" width="180" />
+        <el-table-column label="开始" width="180">
+          <template #default="{ row }">{{ formatLocal(row.start_at) }}</template>
+        </el-table-column>
         <el-table-column label="结束" width="180">
-          <template #default="{ row }">{{ row.end_at || '长期' }}</template>
+          <template #default="{ row }">{{ row.end_at ? formatLocal(row.end_at) : '长期' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">

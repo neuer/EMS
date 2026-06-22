@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, require_idempotency, require_role
 from app.core.db import get_db
 from app.core.security import Role
 from app.engine.rules import invalidate_rule_cache
@@ -39,6 +39,7 @@ async def list_rules(
 async def create_rule(
     body: RuleInput,
     current: User = Depends(require_role(Role.ADMIN)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     rule = AlarmRule(**body.model_dump(), created_by=current.id)

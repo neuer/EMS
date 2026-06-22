@@ -36,6 +36,7 @@ def _send_sync(config: dict[str, Any], to_addr: str, subject: str, body: str) ->
 
 class EmailAdapter:
     type = "email"
+    broadcast = False  # 点对点：需接收人邮箱
 
     async def send(
         self, config: dict[str, Any], recipient: dict[str, Any], message: NotifyMessage

@@ -19,6 +19,7 @@ def _headers(config: dict[str, Any]) -> dict[str, str]:
 
 class WebhookAdapter:
     type = "webhook"
+    broadcast = True  # 按 url 投递，不依赖接收人地址
 
     async def send(
         self, config: dict[str, Any], recipient: dict[str, Any], message: NotifyMessage
