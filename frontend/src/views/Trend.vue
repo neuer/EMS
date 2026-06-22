@@ -52,8 +52,7 @@ async function runQuery(): Promise<void> {
   })
   lastResult = res
   layer.value = res.layer
-  const nameOf = (id: string) =>
-    selected.value.find((p) => p.resource_id === id)?.name || id
+  const nameOf = (id: string) => selected.value.find((p) => p.resource_id === id)?.name || id
   series.value = res.series.map((s) => ({
     name: nameOf(s.point_id),
     data:
@@ -71,9 +70,11 @@ function exportCsv(): void {
   const rows: string[] = ['point_id,time,value']
   for (const s of lastResult.series) {
     if (lastResult.layer === 'raw') {
-      for (const p of s.raw || []) rows.push(`${s.point_id},${new Date(p.ts * 1000).toISOString()},${p.value ?? ''}`)
+      for (const p of s.raw || [])
+        rows.push(`${s.point_id},${new Date(p.ts * 1000).toISOString()},${p.value ?? ''}`)
     } else {
-      for (const p of s.agg || []) rows.push(`${s.point_id},${new Date(p.ts * 1000).toISOString()},${p.avg ?? ''}`)
+      for (const p of s.agg || [])
+        rows.push(`${s.point_id},${new Date(p.ts * 1000).toISOString()},${p.avg ?? ''}`)
     }
   }
   const blob = new Blob([`﻿${rows.join('\n')}`], { type: 'text/csv;charset=utf-8' })

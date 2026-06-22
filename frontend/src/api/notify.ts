@@ -33,7 +33,10 @@ export function listRecipients(): Promise<Recipient[]> {
 export function createRecipient(body: Omit<Recipient, 'id'>): Promise<Recipient> {
   return postJson('/notify/recipients', body)
 }
-export function updateRecipient(id: number, body: Partial<Omit<Recipient, 'id'>>): Promise<Recipient> {
+export function updateRecipient(
+  id: number,
+  body: Partial<Omit<Recipient, 'id'>>,
+): Promise<Recipient> {
   return putJson(`/notify/recipients/${id}`, body)
 }
 export function deleteRecipient(id: number): Promise<{ deleted: number }> {
@@ -64,7 +67,10 @@ export function listRoutes(): Promise<NotifyRoute[]> {
 export function createRoute(body: Omit<NotifyRoute, 'id'>): Promise<NotifyRoute> {
   return postJson('/notify/routes', body)
 }
-export function updateRoute(id: number, body: Partial<Omit<NotifyRoute, 'id'>>): Promise<NotifyRoute> {
+export function updateRoute(
+  id: number,
+  body: Partial<Omit<NotifyRoute, 'id'>>,
+): Promise<NotifyRoute> {
   return putJson(`/notify/routes/${id}`, body)
 }
 export function deleteRoute(id: number): Promise<{ deleted: number }> {
