@@ -19,7 +19,12 @@ from app.core.constants import (
 from app.core.crypto import decrypt
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.core.metrics import M_EMS_OFFLINE, record_failure
+from app.core.metrics import (
+    M_EMS_HEARTBEAT,
+    M_EMS_OFFLINE,
+    M_EMS_RELOGIN,
+    record_failure,
+)
 from app.core.redis import redis_client
 from app.ems.client import EmsClient
 from app.ems.protocol import EmsError
@@ -104,10 +109,19 @@ class ConnectionManager:
                     )
                     await self._set_state(CONN_STATE_OFFLINE, token_ok="0")
                     break
-                logger.warning(
-                    "EMS 连接中断（业务错误），将重连",
-                    extra={"extra_fields": {"code": exc.code, "msg": exc.msg}},
-                )
+                # 审查 M1：显式消费 need_relogin（2/106），让红线 #4「token/心跳失效→强制
+                # 重登重订阅」的语义在代码中可见、可测，而非依赖「任何非致命错误都重连」的巧合。
+                if exc.need_relogin:
+                    logger.warning(
+                        "EMS token/心跳失效，强制重登并重订阅 data+alarm",
+                        extra={"extra_fields": {"code": exc.code, "msg": exc.msg}},
+                    )
+                    await record_failure(M_EMS_RELOGIN, error=f"code={exc.code}")
+                else:
+                    logger.warning(
+                        "EMS 连接中断（业务错误），将重连",
+                        extra={"extra_fields": {"code": exc.code, "msg": exc.msg}},
+                    )
             except Exception as exc:
                 logger.warning(
                     "EMS 连接中断，将重连", extra={"extra_fields": {"error": str(exc)}}
@@ -175,7 +189,13 @@ class ConnectionManager:
             except TimeoutError:
                 pass
             # 心跳失败 / error_code 2/106 → 抛出由主循环重连
-            await self.client.heart()
+            try:
+                await self.client.heart()
+            except Exception as exc:
+                # 审查 M8：心跳是 EMS 在线性核心探针，失败应有独立指标，便于区分「心跳超时」
+                # 与「连接被对端断开」（此前只有笼统的 ems_offline）。记录后仍抛出由主循环重连。
+                await record_failure(M_EMS_HEARTBEAT, error=str(exc))
+                raise
             await redis_client.hset(REDIS_EMS_CONN, "last_heart", int(time.time()))
 
     # ---- 状态写入 ----

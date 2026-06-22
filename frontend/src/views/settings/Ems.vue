@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 
 import { fetchEmsConfig, fetchEmsStatus, updateEmsConfig } from '@/api/settings'
 import type { EmsStatus } from '@/api/types'
+import { handleErr } from '@/lib/errors'
 import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
@@ -64,6 +65,8 @@ async function save(): Promise<void> {
     ElMessage.success('配置已保存，连接管理已按新配置重启')
     form.password = ''
     await loadStatus()
+  } catch (e) {
+    handleErr(e)
   } finally {
     saving.value = false
   }

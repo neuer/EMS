@@ -6,7 +6,15 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.core.constants import NOTIFY_HTTP_TIMEOUT_S
+from app.core.constants import NOTIFY_HTTP_CONNECT_S, NOTIFY_HTTP_READ_S
+
+# 红线 #20：外部 HTTP 显式区分连接/读取超时（write/pool 复用读/连接超时）。
+_NOTIFY_TIMEOUT = httpx.Timeout(
+    connect=NOTIFY_HTTP_CONNECT_S,
+    read=NOTIFY_HTTP_READ_S,
+    write=NOTIFY_HTTP_READ_S,
+    pool=NOTIFY_HTTP_CONNECT_S,
+)
 
 
 class ChannelError(Exception):
@@ -32,6 +40,9 @@ class NotifyMessage:
 
 class ChannelAdapter(Protocol):
     type: str
+    # 群发型渠道（钉钉/企微/webhook 群机器人）按 webhook_url 投递、不依赖接收人地址；
+    # 分发器据此在「路由无接收组」时仍投递一次，避免整条通知静默丢失（审查 H1）。
+    broadcast: bool
 
     async def send(
         self, config: dict[str, Any], recipient: dict[str, Any], message: NotifyMessage
@@ -55,7 +66,7 @@ async def http_post_json(
     if not url:
         raise ChannelError("渠道未配置 url")
     try:
-        async with httpx.AsyncClient(timeout=NOTIFY_HTTP_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_NOTIFY_TIMEOUT) as client:
             resp = await client.post(url, json=payload, headers=headers or {})
     except httpx.HTTPError as exc:
         raise ChannelError(f"HTTP 调用失败: {exc}") from exc

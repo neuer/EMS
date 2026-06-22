@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue'
 
 import { fetchDevices, fetchMeta, fetchPoints, saveMeta } from '@/api/assets'
 import type { DeviceItem, PointItem } from '@/api/types'
+import { handleErr } from '@/lib/errors'
 import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
@@ -41,17 +42,21 @@ async function openEdit(id: string): Promise<void> {
 }
 
 async function save(): Promise<void> {
-  await saveMeta(editing.value, {
-    alias: form.alias || null,
-    group_name: form.group_name || null,
-    tags: form.tagsText ? form.tagsText.split(',').map((s) => s.trim()).filter(Boolean) : null,
-    importance: form.importance ?? null,
-    custom_unit: form.custom_unit || null,
-    remark: form.remark || null,
-  })
-  ElMessage.success('元数据已保存')
-  dialog.value = false
-  load()
+  try {
+    await saveMeta(editing.value, {
+      alias: form.alias || null,
+      group_name: form.group_name || null,
+      tags: form.tagsText ? form.tagsText.split(',').map((s) => s.trim()).filter(Boolean) : null,
+      importance: form.importance ?? null,
+      custom_unit: form.custom_unit || null,
+      remark: form.remark || null,
+    })
+    ElMessage.success('元数据已保存')
+    dialog.value = false
+    load()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 
 onMounted(load)

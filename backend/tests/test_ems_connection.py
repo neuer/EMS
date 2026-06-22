@@ -111,6 +111,26 @@ async def test_run_reconnects_and_resubscribes_after_heart_failure(fake_redis) -
     assert stub.alarm_sub_count == 2  # type: ignore[attr-defined]  每次重连都重订阅 alarm
 
 
+async def test_relogin_metric_recorded_on_token_error(fake_redis) -> None:
+    """审查 M1：心跳收到 2/106 → _run 记 M_EMS_RELOGIN，使红线 #4 重登语义可观测。"""
+    from app.core import metrics
+
+    mgr = _make_manager()
+    mgr.max_backoff = 0
+
+    def _stop_after_two(stub: _StubClient) -> None:
+        if stub.login_count >= 2:
+            mgr._stop.set()
+
+    mgr.client = _StubClient(  # type: ignore[assignment]
+        heart_error=EmsError(106, "heart timeout"), on_login=_stop_after_two
+    )
+    await asyncio.wait_for(mgr._run(), timeout=2)
+    failures = await metrics.get_failures()
+    assert failures.get(metrics.M_EMS_RELOGIN, {}).get("count", 0) >= 1  # 重登触发可观测
+    assert failures.get(metrics.M_EMS_HEARTBEAT, {}).get("count", 0) >= 1  # 心跳失败可观测
+
+
 async def test_run_stops_on_fatal_credential_error(fake_redis) -> None:
     """凭据错误（100）为致命 → _run 立即停止且不重连。"""
     mgr = _make_manager()

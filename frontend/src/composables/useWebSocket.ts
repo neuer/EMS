@@ -51,6 +51,11 @@ export function useRealtimeSocket() {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
       return
     }
+    // 审查 I8：token 为空时不建连——空 token 必被后端以 1008 拒绝并触发登出，
+    // 形成「刚进页面就被踢」。等鉴权就绪后由调用方再次 connect。
+    if (!useAuthStore().token) {
+      return
+    }
     closedByUser = false
     ws = new WebSocket(buildUrl())
 

@@ -48,15 +48,36 @@ async def test_unmatched_recover_records_metric(fake_redis, mem_db):
     assert failures.get(metrics.M_ALARM_UNMATCHED, {}).get("count") == 1
 
 
-async def test_threshold_event_type_dropped(fake_redis, mem_db):
-    """红线 #7：event_type=2（过高，阈值类）必须丢弃，不入库。"""
-    processed = await alarm.handle_alarm_push({"alarms": [_raise("g-thresh", 2)]})
+@pytest.mark.parametrize("event_type", [2, 3, 4])
+async def test_threshold_event_types_dropped(fake_redis, mem_db, event_type):
+    """红线 #7：阈值类（2 过高/3 不正常/4 过低）一律丢弃，由平台规则引擎负责。"""
+    processed = await alarm.handle_alarm_push(
+        {"alarms": [_raise(f"g-thr-{event_type}", event_type)]}
+    )
     assert processed == 0
 
 
-async def test_device_event_type_accepted_and_deduped(fake_redis, mem_db, _no_suppress):
-    """event_type=0（通信中断）纳入；相同 guid 再来一次被去重。"""
+@pytest.mark.parametrize("event_type", [0, 21, 30])
+async def test_device_event_types_accepted(fake_redis, mem_db, _no_suppress, event_type):
+    """红线 #7：通信中断(0)/故障(21)/停止采集(30) 三类均须纳入入库——
+    此前仅测了 0，21/30 被误改为不纳入也不会被发现。"""
+    processed = await alarm.handle_alarm_push(
+        {"alarms": [_raise(f"g-{event_type}", event_type)]}
+    )
+    assert processed == 1
+
+
+async def test_event_type_dedup(fake_redis, mem_db, _no_suppress):
+    """同 guid 再来一次被去重。"""
     first = await alarm.handle_alarm_push({"alarms": [_raise("g-comm", 0)]})
     assert first == 1
     dup = await alarm.handle_alarm_push({"alarms": [_raise("g-comm", 0)]})
     assert dup == 0  # guid 去重
+
+
+async def test_accepted_and_threshold_mixed_batch(fake_redis, mem_db, _no_suppress):
+    """混批：故障(21) 与阈值类(4) 同时到达，只纳入 21。"""
+    processed = await alarm.handle_alarm_push(
+        {"alarms": [_raise("g-fault", 21), _raise("g-low", 4)]}
+    )
+    assert processed == 1

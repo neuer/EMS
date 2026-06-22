@@ -31,7 +31,10 @@ class EmsClient:
                 read=settings.ems_read_timeout,
                 write=settings.ems_read_timeout,
                 pool=settings.ems_connect_timeout,
-            )
+            ),
+            # 审查 I11：限制连接池上限，避免 EMS 慢响应时连接无界堆积（心跳/回补/拉取共用本 client）
+            # 耗尽本地句柄、互相饿死。pool timeout 仅控「等连接」，不限并发数，故显式设 limits。
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
         )
 
     async def aclose(self) -> None:

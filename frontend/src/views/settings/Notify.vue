@@ -31,8 +31,9 @@ import {
   type Recipient,
   type RecipientGroup,
 } from '@/api/types'
-import { useAuthStore } from '@/store/auth'
 import { formatLocal } from '@/lib/datetime'
+import { handleErr } from '@/lib/errors'
+import { useAuthStore } from '@/store/auth'
 
 const auth = useAuthStore()
 const tab = ref('channels')
@@ -83,24 +84,36 @@ async function saveCh(): Promise<void> {
     ElMessage.error('配置不是合法 JSON')
     return
   }
-  if (chEditId.value === null) {
-    await createChannel({ type: chForm.type, name: chForm.name, config, enabled: chForm.enabled })
-  } else {
-    await updateChannel(chEditId.value, { name: chForm.name, config, enabled: chForm.enabled })
+  try {
+    if (chEditId.value === null) {
+      await createChannel({ type: chForm.type, name: chForm.name, config, enabled: chForm.enabled })
+    } else {
+      await updateChannel(chEditId.value, { name: chForm.name, config, enabled: chForm.enabled })
+    }
+    ElMessage.success('已保存')
+    chDialog.value = false
+    loadAll()
+  } catch (e) {
+    handleErr(e)
   }
-  ElMessage.success('已保存')
-  chDialog.value = false
-  loadAll()
 }
 async function testCh(c: NotifyChannel): Promise<void> {
-  const r = await testChannel(c.id)
-  if (r.ok) ElMessage.success(`连通正常：${r.detail}`)
-  else ElMessage.error(`连通失败：${r.detail}`)
+  try {
+    const r = await testChannel(c.id)
+    if (r.ok) ElMessage.success(`连通正常：${r.detail}`)
+    else ElMessage.error(`连通失败：${r.detail}`)
+  } catch (e) {
+    handleErr(e)
+  }
 }
 async function removeCh(c: NotifyChannel): Promise<void> {
-  await ElMessageBox.confirm(`删除渠道 ${c.name}？`, '提示', { type: 'warning' })
-  await deleteChannel(c.id)
-  loadAll()
+  try {
+    await ElMessageBox.confirm(`删除渠道 ${c.name}？`, '提示', { type: 'warning' })
+    await deleteChannel(c.id)
+    loadAll()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 // ---------------- 接收人 ----------------
@@ -140,16 +153,24 @@ async function saveRc(): Promise<void> {
     wecom_id: rcForm.wecom_id || null,
     enabled: rcForm.enabled,
   }
-  if (rcEditId.value === null) await createRecipient(body)
-  else await updateRecipient(rcEditId.value, body)
-  ElMessage.success('已保存')
-  rcDialog.value = false
-  loadAll()
+  try {
+    if (rcEditId.value === null) await createRecipient(body)
+    else await updateRecipient(rcEditId.value, body)
+    ElMessage.success('已保存')
+    rcDialog.value = false
+    loadAll()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 async function removeRc(r: Recipient): Promise<void> {
-  await ElMessageBox.confirm(`删除接收人 ${r.name}？`, '提示', { type: 'warning' })
-  await deleteRecipient(r.id)
-  loadAll()
+  try {
+    await ElMessageBox.confirm(`删除接收人 ${r.name}？`, '提示', { type: 'warning' })
+    await deleteRecipient(r.id)
+    loadAll()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 // ---------------- 接收组 ----------------
@@ -170,16 +191,24 @@ function openGr(g?: RecipientGroup): void {
 }
 async function saveGr(): Promise<void> {
   const body = { name: grForm.name, member_ids: grForm.member_ids }
-  if (grEditId.value === null) await createGroup(body)
-  else await updateGroup(grEditId.value, body)
-  ElMessage.success('已保存')
-  grDialog.value = false
-  loadAll()
+  try {
+    if (grEditId.value === null) await createGroup(body)
+    else await updateGroup(grEditId.value, body)
+    ElMessage.success('已保存')
+    grDialog.value = false
+    loadAll()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 async function removeGr(g: RecipientGroup): Promise<void> {
-  await ElMessageBox.confirm(`删除接收组 ${g.name}？`, '提示', { type: 'warning' })
-  await deleteGroup(g.id)
-  loadAll()
+  try {
+    await ElMessageBox.confirm(`删除接收组 ${g.name}？`, '提示', { type: 'warning' })
+    await deleteGroup(g.id)
+    loadAll()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 // ---------------- 级别路由 ----------------
@@ -216,16 +245,24 @@ function openRt(r?: NotifyRoute): void {
 }
 async function saveRt(): Promise<void> {
   const body = { ...rtForm }
-  if (rtEditId.value === null) await createRoute(body)
-  else await updateRoute(rtEditId.value, body)
-  ElMessage.success('已保存')
-  rtDialog.value = false
-  loadAll()
+  try {
+    if (rtEditId.value === null) await createRoute(body)
+    else await updateRoute(rtEditId.value, body)
+    ElMessage.success('已保存')
+    rtDialog.value = false
+    loadAll()
+  } catch (e) {
+    handleErr(e)
+  }
 }
 async function removeRt(r: NotifyRoute): Promise<void> {
-  await ElMessageBox.confirm(`删除 ${LEVEL_LABEL[r.level]} 路由？`, '提示', { type: 'warning' })
-  await deleteRoute(r.id)
-  loadAll()
+  try {
+    await ElMessageBox.confirm(`删除 ${LEVEL_LABEL[r.level]} 路由？`, '提示', { type: 'warning' })
+    await deleteRoute(r.id)
+    loadAll()
+  } catch (e) {
+    if (e !== 'cancel') handleErr(e)
+  }
 }
 
 function channelName(id: number): string {

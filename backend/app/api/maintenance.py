@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_role
+from app.api.deps import require_idempotency, require_role
 from app.core.db import get_db
 from app.core.security import Role
 from app.models.suppress import MaintenanceWindow
@@ -35,6 +35,7 @@ async def list_windows(
 async def create_window(
     body: MaintenanceInput,
     current: User = Depends(require_role(Role.OPERATOR)),
+    __: None = Depends(require_idempotency),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     win = MaintenanceWindow(**body.model_dump(), created_by=current.id)

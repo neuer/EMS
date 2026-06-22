@@ -172,9 +172,11 @@ onMounted(async () => {
   connect()
   subscribe(keyPoints.value.map((p) => p.resource_id))
 
-  dataTimer = setInterval(async () => {
-    await refresh()
-    await loadCurves()
+  dataTimer = setInterval(() => {
+    // 轮询回调包错误吞吐：单次失败不产生未捕获 promise 异常，也不中断后续轮询
+    Promise.all([refresh(), loadCurves()]).catch((e) =>
+      console.error('大屏轮询刷新失败', e),
+    )
   }, 10000)
   alarmTimer = setInterval(rotateAlarms, 2500)
   areaTimer = setInterval(() => (areaPage.value += 1), 5000)

@@ -44,6 +44,12 @@ EMS_SUSTAINED_OUTAGE_RECONNECTS = 3
 REDIS_HISTORY_LOCK = "lock:history"
 # 用户管理写操作互斥锁：串行化「保留至少一个管理员」守卫，防 TOCTOU 自锁（审查 C3）
 REDIS_USER_ADMIN_LOCK = "lock:user_admin_guard"
+# 配置同步互斥锁：首连/定时/手动同步并发时，避免基于过期快照交叉失活与统计不一致（审查 M5）
+REDIS_CONFIG_SYNC_LOCK = "lock:config_sync"
+REDIS_CONFIG_SYNC_LOCK_TTL = 600
+# 写操作幂等键（红线 §18）：携带 Idempotency-Key 的写请求短窗口内去重，防重复副作用
+REDIS_IDEMPOTENCY = "idem:{key}"
+IDEMPOTENCY_TTL_S = 600
 # 锁 TTL（秒）：防止异常未释放导致历史请求永久阻塞
 REDIS_HISTORY_LOCK_TTL = 600
 
@@ -66,6 +72,10 @@ BACKFILL_GAP_THRESHOLD_S = 45
 BACKFILL_MAX_WINDOW_S = 7 * 86400  # 最多回补最近 7 天
 # 回补使用的降采样粒度（与 5min 连续聚合对齐）
 BACKFILL_INTERVAL = "five"
+# 实时落库失败时缺口起点的回退步长（秒）：当无更早的有效时刻可用时，缺口起点取
+# period - 该值，保证 gap_end(=period) > gap_start，使 backfill_watch 不把缺口当空窗口删除
+# （审查 S2）。对齐实时推送周期（10s）。
+REALTIME_FALLBACK_GAP_S = 10
 
 # ---- 规则引擎 / 告警生命周期 / 抑制（Sprint 3） ----
 # 去抖：规则首次越限时刻（Unix 秒）；持续 ≥ continuous_time 才产生告警
@@ -145,12 +155,27 @@ NOTIFY_TRIGGER_DIGEST = "digest"
 REDIS_NOTIFY_DIGEST = "notify:digest"
 # 摘要附带信息 Hash：field=merge_key value=JSON{level,resource_id,content}
 REDIS_NOTIFY_DIGEST_META = "notify:digest:meta"
+# 告警事件发布失败补偿队列（List）：已 commit 但 Pub/Sub 发布失败的事件入队，由调度器重投，
+# 避免「告警已落库但通知永久丢失」（审查 M2）。超过最大尝试次数后丢弃并记指标。
+REDIS_NOTIFY_PENDING = "notify:pending_events"
+NOTIFY_PENDING_MAX_ATTEMPTS = 5
+# 重投巡检间隔（秒）
+NOTIFY_RETRY_INTERVAL_S = 60
+
+# 通知发送幂等键（审查 I1）：发送前 SETNX 预留，避免重投/重复消费导致重复外呼（§18/§19）
+REDIS_NOTIFY_DEDUP = "notify:dedup:{alarm_id}:{channel_id}:{recipient}:{trigger}"
+# 幂等键 TTL（秒）：略大于合并窗口，覆盖一轮重投周期
+NOTIFY_DEDUP_TTL_S = ANTI_FLOOD_MERGE_WINDOW_S + NOTIFY_RETRY_INTERVAL_S
+# 摘要累计 Hash 兜底 TTL（秒）：> flush 周期，flush 停摆时防 Redis 泄漏与明文滞留（审查 I3）
+NOTIFY_DIGEST_HASH_TTL_S = ANTI_FLOOD_MERGE_WINDOW_S * 4
 
 # 发送重试次数（首发之外的额外重试）与间隔（秒）
 NOTIFY_MAX_RETRY = 2
 NOTIFY_RETRY_BACKOFF_S = 1.0
-# 外呼/HTTP 渠道超时（秒）
-NOTIFY_HTTP_TIMEOUT_S = 8.0
+# 外呼/HTTP 渠道超时（秒）：红线 #20 显式区分连接/读取超时
+NOTIFY_HTTP_TIMEOUT_S = 8.0  # 兼容保留（总超时语义）
+NOTIFY_HTTP_CONNECT_S = 5.0
+NOTIFY_HTTP_READ_S = 8.0
 # 周期摘要刷新间隔（秒）：与合并窗口对齐
 NOTIFY_DIGEST_INTERVAL_S = ANTI_FLOOD_MERGE_WINDOW_S
 

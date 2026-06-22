@@ -21,6 +21,7 @@ from app.notify.channels.base import (
 
 class SmsAdapter:
     type = "sms"
+    broadcast = False  # 点对点：需接收人手机号
 
     async def send(
         self, config: dict[str, Any], recipient: dict[str, Any], message: NotifyMessage

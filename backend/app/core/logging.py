@@ -12,6 +12,7 @@ import sys
 from datetime import UTC, datetime
 
 from app.core.config import settings
+from app.core.context import get_request_id
 
 _CONFIGURED = False
 
@@ -26,7 +27,11 @@ class JsonFormatter(logging.Formatter):
             "module": record.name,
             "message": record.getMessage(),
         }
-        # 透传额外结构化字段（如 request_id），保持可解析
+        # 自动注入当前请求的 request_id（红线 §10：贯穿前后端、队列），非请求上下文为空则省略
+        request_id = get_request_id()
+        if request_id:
+            payload["request_id"] = request_id
+        # 透传额外结构化字段，保持可解析
         for key, value in getattr(record, "extra_fields", {}).items():
             payload[key] = value
         if record.exc_info:

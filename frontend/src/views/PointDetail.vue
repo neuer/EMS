@@ -42,6 +42,11 @@ async function loadHistory(): Promise<void> {
   })
   layer.value = res.layer
   const s = res.series[0]
+  if (!s) {
+    // 后端未返回该测点序列（理论上不应发生）：清空曲线而非访问 undefined 报错
+    series.value = [{ name: detail.value?.name || pointId, data: [] }]
+    return
+  }
   const data: [number, number | null][] =
     res.layer === 'raw'
       ? (s.raw || []).map((p) => [p.ts * 1000, p.value])

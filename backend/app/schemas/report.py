@@ -7,11 +7,22 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from apscheduler.triggers.cron import CronTrigger
+from pydantic import BaseModel, Field, field_validator
 
 Granularity = Literal["day", "week", "month"]
 ReportType = Literal["daily", "weekly", "monthly"]
 ExportFormat = Literal["csv", "xlsx"]
+
+
+def _validate_cron(v: str) -> str:
+    """审查 I4：cron 仅校验长度时，非法值落库后 reload 静默跳过 → POST 200 但报表永不运行。
+    用 APScheduler 的解析器预校验，非法即在 API 层 422 拒绝。"""
+    try:
+        CronTrigger.from_crontab(v)
+    except ValueError as exc:
+        raise ValueError(f"非法 cron 表达式: {exc}") from exc
+    return v
 
 
 # ---- 告警统计 ----
@@ -53,6 +64,11 @@ class ReportScheduleInput(BaseModel):
     group_ids: list[int] = Field(default_factory=list)
     enabled: bool = True
 
+    @field_validator("cron")
+    @classmethod
+    def _check_cron(cls, v: str) -> str:
+        return _validate_cron(v)
+
 
 class ReportScheduleUpdate(BaseModel):
     name: str | None = None
@@ -60,6 +76,11 @@ class ReportScheduleUpdate(BaseModel):
     cron: str | None = Field(None, min_length=1, max_length=64)
     group_ids: list[int] | None = None
     enabled: bool | None = None
+
+    @field_validator("cron")
+    @classmethod
+    def _check_cron(cls, v: str | None) -> str | None:
+        return None if v is None else _validate_cron(v)
 
 
 class ReportScheduleOutput(BaseModel):

@@ -7,11 +7,16 @@
 """
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import (
     alarms,
@@ -35,11 +40,13 @@ from app.api import (
     settings as settings_api,
 )
 from app.core.config import settings
+from app.core.context import set_request_id
 from app.core.logging import get_logger, setup_logging
 from app.ems import push_server
 from app.ems.connection import start_connection_manager, stop_connection_manager
 from app.notify.dispatcher import start_notify_worker, stop_notify_worker
 from app.scheduler import start_scheduler, stop_scheduler
+from app.schemas.common import fail
 from app.seed import seed_default_admin, seed_ems_config
 
 logger = get_logger("app")
@@ -90,6 +97,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+REQUEST_ID_HEADER = "X-Request-ID"
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):  # noqa: ANN001, ANN201
+    """红线 §10：为每个请求生成/透传 request_id，写入上下文与响应头，贯穿日志链路。"""
+    request_id = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
+    set_request_id(request_id)
+    response = await call_next(request)
+    response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """统一错误模型（红线 §16）：HTTPException → {code,msg,data}，code 取 HTTP 状态码。"""
+    return JSONResponse(status_code=exc.status_code, content=fail(exc.status_code, str(exc.detail)))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """请求校验失败：422 + 结构化字段错误（details，§16.1）。"""
+    return JSONResponse(
+        status_code=422,
+        content=fail(422, "请求参数校验失败", jsonable_encoder(exc.errors())),
+    )
 
 # 健康检查与 EMS 推送接收端点挂根路径（推送目标为 recv_ip:recv_port/north/...）
 app.include_router(health.router)
