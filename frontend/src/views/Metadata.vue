@@ -25,8 +25,7 @@ const form = reactive({
 
 async function load(): Promise<void> {
   const params = { keyword: keyword.value || undefined }
-  rows.value =
-    kind.value === 'point' ? await fetchPoints(params) : await fetchDevices(params)
+  rows.value = kind.value === 'point' ? await fetchPoints(params) : await fetchDevices(params)
 }
 
 async function openEdit(id: string): Promise<void> {
@@ -46,7 +45,12 @@ async function save(): Promise<void> {
     await saveMeta(editing.value, {
       alias: form.alias || null,
       group_name: form.group_name || null,
-      tags: form.tagsText ? form.tagsText.split(',').map((s) => s.trim()).filter(Boolean) : null,
+      tags: form.tagsText
+        ? form.tagsText
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : null,
       importance: form.importance ?? null,
       custom_unit: form.custom_unit || null,
       remark: form.remark || null,

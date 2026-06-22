@@ -12,9 +12,10 @@ export function fetchSpaceTree(): Promise<SpaceNode[]> {
   return getJson('/tree/spaces')
 }
 
-export function fetchSpaceChildren(
-  spaceId: string,
-): Promise<{ spaces: { resource_id: string; name: string; space_type: number | null; alias: string | null }[]; devices: DeviceItem[] }> {
+export function fetchSpaceChildren(spaceId: string): Promise<{
+  spaces: { resource_id: string; name: string; space_type: number | null; alias: string | null }[]
+  devices: DeviceItem[]
+}> {
   return getJson(`/spaces/${spaceId}/children`)
 }
 

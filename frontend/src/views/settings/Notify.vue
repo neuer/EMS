@@ -119,7 +119,14 @@ async function removeCh(c: NotifyChannel): Promise<void> {
 // ---------------- 接收人 ----------------
 const rcDialog = ref(false)
 const rcEditId = ref<number | null>(null)
-const rcForm = reactive({ name: '', phone: '', email: '', dingtalk_id: '', wecom_id: '', enabled: true })
+const rcForm = reactive({
+  name: '',
+  phone: '',
+  email: '',
+  dingtalk_id: '',
+  wecom_id: '',
+  enabled: true,
+})
 function openRc(r?: Recipient): void {
   if (r) {
     rcEditId.value = r.id

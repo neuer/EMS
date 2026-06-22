@@ -49,9 +49,7 @@ const wrapStyle = computed(() => ({
   transform: `translate(-50%, -50%) scale(${scale.value})`,
 }))
 
-const clockText = computed(() =>
-  now.value.toLocaleString('zh-CN', { hour12: false }),
-)
+const clockText = computed(() => now.value.toLocaleString('zh-CN', { hour12: false }))
 
 const levelCards = computed(() =>
   [1, 2, 3, 4, 5].map((lv) => ({
@@ -128,8 +126,7 @@ async function loadCurves(): Promise<void> {
     end,
     agg: 'auto',
   })
-  const nameOf = (id: string) =>
-    keyPoints.value.find((p) => p.resource_id === id)?.name || id
+  const nameOf = (id: string) => keyPoints.value.find((p) => p.resource_id === id)?.name || id
   renderChart(
     res.series.map((s) => ({
       name: nameOf(s.point_id),
@@ -174,9 +171,7 @@ onMounted(async () => {
 
   dataTimer = setInterval(() => {
     // 轮询回调包错误吞吐：单次失败不产生未捕获 promise 异常，也不中断后续轮询
-    Promise.all([refresh(), loadCurves()]).catch((e) =>
-      console.error('大屏轮询刷新失败', e),
-    )
+    Promise.all([refresh(), loadCurves()]).catch((e) => console.error('大屏轮询刷新失败', e))
   }, 10000)
   alarmTimer = setInterval(rotateAlarms, 2500)
   areaTimer = setInterval(() => (areaPage.value += 1), 5000)

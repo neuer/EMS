@@ -10,7 +10,9 @@ export function queryHistory(body: {
   return postJson('/history/query', body)
 }
 
-export function fetchLatest(ids: string[]): Promise<{ id: string; value: string | null; save_time: number | null }[]> {
+export function fetchLatest(
+  ids: string[],
+): Promise<{ id: string; value: string | null; save_time: number | null }[]> {
   return getJson('/realtime/points', { ids: ids.join(',') })
 }
 
