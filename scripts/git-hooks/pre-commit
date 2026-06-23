@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# 提交前轻量门禁（仅检查本次暂存的改动文件）：后端 ruff、前端 biome（格式 + lint）。
+# 这两项快；全量 pyright / pytest / vue-tsc 较慢，交给 CI 与 `make ci`。
+# 安装：make hooks（设置 core.hooksPath → scripts/git-hooks）。
+# 单次绕过：git commit --no-verify。
+# 兼容 macOS 自带 bash 3.2：不使用 mapfile，空数组前先判长度（避免 set -u 报错）。
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+status=0
+
+backend_py=()
+frontend_files=()
+while IFS= read -r f; do
+  case "$f" in
+    backend/*.py) backend_py+=("${f#backend/}") ;;
+    frontend/*.ts | frontend/*.vue | frontend/*.json) frontend_files+=("${f#frontend/}") ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if [ ${#backend_py[@]} -gt 0 ]; then
+  echo "==> ruff（后端暂存 ${#backend_py[@]} 个文件）"
+  ( cd "$ROOT/backend" && uv run ruff check "${backend_py[@]}" ) || status=1
+fi
+
+if [ ${#frontend_files[@]} -gt 0 ]; then
+  echo "==> biome（前端暂存 ${#frontend_files[@]} 个文件）"
+  ( cd "$ROOT/frontend" && bun x biome check --error-on-warnings "${frontend_files[@]}" ) || status=1
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo "✗ 提交前门禁未通过。修复后重试，或 git commit --no-verify 跳过。" >&2
+fi
+exit "$status"
