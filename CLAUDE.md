@@ -37,5 +37,27 @@
 - 输出中文界面与中文注释；日志按模块（采集/规则/通知/同步）分类。
 - 每个 Sprint 完成对照 `05` 的验收自测，并补关键路径测试。
 
+## 协作流程（main 受保护，必须走 PR）
+`main` 已配 GitHub Ruleset，**禁止直接 push**：所有变更经 PR 合并，且两个 CI 必需检查必须为绿。
+- 必需检查：`后端门禁 (ruff / pyright / pytest)`、`前端门禁 (biome / vue-tsc)`（strict：分支需与 main 最新）。
+- 还禁止 force-push 与删除 main；规则对所有人（含 owner）生效，无 bypass。
+
+标准流程：
+```bash
+git switch -c <type>/<topic>      # 如 feat/alarm-merge、fix/ws-token、docs/xxx
+# 改动 + 提交（pre-commit 钩子自动跑 ruff/biome，仅查暂存改动）
+git push -u origin <branch>
+gh pr create --fill               # 按 .github/PULL_REQUEST_TEMPLATE.md 填写
+# 等两个 CI job 变绿
+gh pr merge --squash --delete-branch   # 或 --merge / --rebase
+```
+
+本地门禁（与 CI 同口径，建议提交前自查）：
+- `make hooks`：一次性启用 pre-commit 钩子（`core.hooksPath` → `scripts/git-hooks`）。绕过单次：`git commit --no-verify`。
+- `make ci`：本地跑全量门禁（后端 ruff/pyright/pytest + 前端 biome/vue-tsc）。
+- CI 后端测试离线确定性（fakeredis/aiosqlite/respx），无需起 DB/Redis。
+
+PR 描述遵循全局规范 §21（Summary/Contract/Tests/Migration/Checklist/Compliance/Exceptions），模板见 `.github/PULL_REQUEST_TEMPLATE.md`。
+
 ## 不要做
 工单/巡检/排班/资产/PUE/多中心/多厂商/下控/向 EMS 写规则/审计日志/等保基线/浏览器 localStorage 持久化业务数据。
