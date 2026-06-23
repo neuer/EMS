@@ -1,0 +1,63 @@
+name: CI
+
+# 质量门禁（CLAUDE.md §4.3）：安装 → lint → 类型检查 → 测试。
+# 后端测试离线确定性（fakeredis/aiosqlite/respx），无需 DB/Redis 服务。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端门禁 (ruff / pyright / pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 创建虚拟环境与安装依赖
+        run: |
+          uv venv --python 3.12
+          uv pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: 类型检查 (pyright)
+        run: uv run pyright
+
+      - name: 测试 (pytest，离线确定性)
+        run: uv run pytest
+
+  frontend:
+    name: 前端门禁 (biome / vue-tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: Lint + 格式校验 (biome)
+        run: bun run lint
+
+      - name: 类型检查 (vue-tsc)
+        run: bun x vue-tsc --noEmit
