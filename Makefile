@@ -1,5 +1,5 @@
 # 常用命令封装
-.PHONY: up down logs ps migrate test backup restore e2e
+.PHONY: up down logs ps migrate test ci backup restore e2e
 
 up:            ## 一键起栈
 	docker compose up -d --build
@@ -18,6 +18,9 @@ migrate:       ## 在 backend 容器内执行迁移
 
 test:          ## 后端单元测试
 	cd backend && pytest
+
+ci:            ## 本地全量质量门禁（后端 ruff/pyright/pytest + 前端 biome/vue-tsc）
+	bash scripts/ci.sh
 
 backup:        ## 数据库备份（pg_dump -Fc，含校验与保留清理）
 	bash scripts/backup.sh
