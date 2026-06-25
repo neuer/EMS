@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.notify.channels.base import ChannelError, NotifyMessage, http_post_json
+from app.notify.channels.base import (
+    ChannelError,
+    NotifyMessage,
+    http_post_json,
+    raise_for_business_error,
+)
 
 
 def _headers(config: dict[str, Any]) -> dict[str, str]:
@@ -33,12 +38,16 @@ class WebhookAdapter:
             "content": message.content,
             "merge_count": message.merge_count,
         }
-        await http_post_json(config.get("url", ""), payload, _headers(config))
+        body = await http_post_json(config.get("url", ""), payload, _headers(config))
+        # 审查 S1/HIGH-1：与其余渠道一致校验「HTTP 200 但业务码失败」，避免限流/拦截
+        # 被静默记成 sent（通知静默失败=告警未送达）。
+        raise_for_business_error(body, channel="Webhook")
         return config.get("url", "")
 
     async def test(self, config: dict[str, Any]) -> None:
         if not config.get("url"):
             raise ChannelError("缺少 url")
-        await http_post_json(
+        body = await http_post_json(
             config["url"], {"trigger": "test", "content": "[连通测试]"}, _headers(config)
         )
+        raise_for_business_error(body, channel="Webhook")
