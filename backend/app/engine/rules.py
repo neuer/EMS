@@ -23,6 +23,7 @@ from app.core.constants import (
 )
 from app.core.db import AsyncSessionLocal
 from app.core.logging import get_logger
+from app.core.metrics import M_RULE_EVAL, record_failure
 from app.core.redis import redis_client
 from app.engine import lifecycle
 from app.engine.lifecycle import OPEN_STATUSES
@@ -285,11 +286,23 @@ async def evaluate_batch(items: list[tuple[str, float | None, int]]) -> None:
         for point_id, value, ts in items:
             if value is None:
                 continue
-            specs = await _cache.get_for_point(db, point_id)
-            if not specs:
-                continue
-            if await _evaluate_one(db, specs, point_id, value, ts):
-                changed = True
+            try:
+                # 审查 I3 / CRITICAL-1：每个测点在独立 savepoint 内评估。单点评估抛错
+                # （Redis/DB 抖动等）仅回滚自身、不中断整个循环——此前共享会话下一个坏
+                # 测点会让本批后续测点的越限静默漏判（监控系统漏报=事故）。范式同
+                # ingest/alarm.py 的单条告警隔离。
+                async with db.begin_nested():
+                    specs = await _cache.get_for_point(db, point_id)
+                    if not specs:
+                        continue
+                    if await _evaluate_one(db, specs, point_id, value, ts):
+                        changed = True
+            except Exception as exc:
+                logger.error(
+                    "单测点规则评估失败",
+                    extra={"extra_fields": {"point_id": point_id, "error": str(exc)}},
+                )
+                await record_failure(M_RULE_EVAL, error=f"{point_id}:{exc}")
         if changed:
             await db.commit()
             await lifecycle.publish_pending(db)
