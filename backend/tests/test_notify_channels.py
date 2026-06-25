@@ -16,6 +16,7 @@ from app.notify.channels.base import (
 )
 from app.notify.channels.dingtalk import DingtalkAdapter
 from app.notify.channels.sms import SmsAdapter
+from app.notify.channels.webhook import WebhookAdapter
 
 _MSG = NotifyMessage(
     subject="[严重告警] x", content="机房温度过高", level=2, trigger="raise", resource_id="p1"
@@ -71,3 +72,33 @@ async def test_sms_send_raises_on_business_error():
     )
     with pytest.raises(ChannelError):
         await SmsAdapter().send({"gateway_url": "http://sms/gw"}, {"phone": "13800000000"}, _MSG)
+
+
+@respx.mock
+async def test_webhook_send_raises_on_business_error():
+    """Webhook 返回 200 + code=1（限流）→ send 必须抛 ChannelError，不能被记 sent。
+
+    回归：webhook 此前唯独未校验业务码，对端 200 + 业务失败会被静默记成发送成功
+    （通知静默失败=告警未送达）。
+    """
+    respx.post("http://hook/x").mock(
+        return_value=httpx.Response(200, json={"code": 1, "msg": "rate limited"})
+    )
+    with pytest.raises(ChannelError):
+        await WebhookAdapter().send({"url": "http://hook/x"}, {}, _MSG)
+
+
+@respx.mock
+async def test_webhook_send_ok():
+    respx.post("http://hook/x").mock(return_value=httpx.Response(200, json={"code": 0}))
+    addr = await WebhookAdapter().send({"url": "http://hook/x"}, {}, _MSG)
+    assert addr == "http://hook/x"
+
+
+@respx.mock
+async def test_webhook_test_raises_on_business_error():
+    respx.post("http://hook/x").mock(
+        return_value=httpx.Response(200, json={"success": False, "msg": "拒绝"})
+    )
+    with pytest.raises(ChannelError):
+        await WebhookAdapter().test({"url": "http://hook/x"})
